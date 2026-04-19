@@ -10,6 +10,32 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, RichLog
 
+TASK_COLUMNS = ("id", "project", "status", "attempts", "title")
+
+
+def load_task_rows(db_path: Path) -> list[tuple[str, str, str, str, str]]:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = list(
+            conn.execute(
+                "SELECT id, project, status, attempts, title FROM tasks ORDER BY id"
+            )
+        )
+    finally:
+        conn.close()
+
+    return [
+        (
+            str(row["id"]),
+            row["project"],
+            row["status"],
+            str(row["attempts"]),
+            row["title"],
+        )
+        for row in rows
+    ]
+
 
 class Dashboard(App):
     CSS = """
@@ -36,7 +62,7 @@ class Dashboard(App):
 
     def on_mount(self) -> None:
         table = self.query_one("#tasks_table", DataTable)
-        table.add_columns("id", "status", "attempts", "title")
+        table.add_columns(*TASK_COLUMNS)
         table.cursor_type = "row"
         self.set_interval(0.5, self._refresh_tasks)
         self.set_interval(0.2, self._pull_events)
@@ -46,23 +72,16 @@ class Dashboard(App):
             return
 
         table = self.query_one("#tasks_table", DataTable)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
         try:
-            rows = list(conn.execute("SELECT id, status, attempts, title FROM tasks ORDER BY id"))
+            rows = load_task_rows(self.db_path)
         except sqlite3.OperationalError:
             return
-        finally:
-            conn.close()
 
         table.clear()
         for row in rows:
             table.add_row(
-                str(row["id"]),
-                row["status"],
-                str(row["attempts"]),
-                row["title"],
-                key=str(row["id"]),
+                *row,
+                key=row[0],
             )
 
     def _pull_events(self) -> None:

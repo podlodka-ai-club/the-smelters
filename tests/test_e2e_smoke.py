@@ -32,8 +32,8 @@ async def test_solve_task_001_with_real_agents(tmp_path: Path) -> None:
     tasks_root = tmp_path / "tasks"
     tasks_root.mkdir()
     shutil.copy2(
-        Path(__file__).parent.parent / "tasks" / "001_divide_by_zero.md",
-        tasks_root / "001_divide_by_zero.md",
+        Path(__file__).parent.parent / "tasks" / "1-divide-by-zero.md",
+        tasks_root / "1-divide-by-zero.md",
     )
 
     db_path = tmp_path / "tasks.db"

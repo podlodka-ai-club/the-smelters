@@ -10,6 +10,13 @@ from seed import seed
 from src.tracker import Tracker
 
 
+def _copy_python_fixture_tasks(source_tasks: Path, tasks_root: Path) -> None:
+    tasks_root.mkdir()
+    for task_file in source_tasks.glob("*.md"):
+        if task_file.read_text(encoding="utf-8").startswith("Project: python_fixture\n"):
+            shutil.copy2(task_file, tasks_root / task_file.name)
+
+
 @pytest.mark.asyncio
 async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> None:
     source_project = Path(__file__).parent.parent / "projects" / "python_fixture"
@@ -23,7 +30,7 @@ async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> 
         project_repo,
         ignore=shutil.ignore_patterns(".pytest_cache", "__pycache__", ".venv", ".DS_Store"),
     )
-    shutil.copytree(source_tasks, tasks_root)
+    _copy_python_fixture_tasks(source_tasks, tasks_root)
 
     db_path = tmp_path / "tasks.db"
     events_path = tmp_path / "events.jsonl"

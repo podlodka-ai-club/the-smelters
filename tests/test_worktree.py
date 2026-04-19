@@ -24,13 +24,13 @@ def test_create_worktree_makes_branch_and_dir(tmp_target_repo: Path, tmp_path: P
     worktree_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=worktrees_root)
     assert worktree_path.exists()
     assert (worktree_path / "a.txt").read_text() == "hello\n"
-    branches = subprocess.run(
-        ["git", "-C", str(tmp_target_repo), "branch", "--list", "task-1"],
+    branch = subprocess.run(
+        ["git", "-C", str(worktree_path), "rev-parse", "--abbrev-ref", "HEAD"],
         capture_output=True,
         text=True,
         check=True,
-    ).stdout
-    assert "task-1" in branches
+    ).stdout.strip()
+    assert branch == "task-1"
 
 
 def test_create_worktree_idempotent_returns_existing(tmp_target_repo: Path, tmp_path: Path) -> None:
@@ -78,7 +78,7 @@ def test_create_worktree_prunes_stale_git_metadata(tmp_target_repo: Path, tmp_pa
     assert (recreated_path / "a.txt").read_text() == "hello\n"
 
 
-def test_create_worktree_reclaims_existing_task_branch_from_old_path(
+def test_create_worktree_allows_independent_copies_for_same_task_id_in_different_roots(
     tmp_target_repo: Path,
     tmp_path: Path,
 ) -> None:
@@ -90,6 +90,27 @@ def test_create_worktree_reclaims_existing_task_branch_from_old_path(
     new_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=new_root)
 
     assert old_path != new_path
-    assert not old_path.exists()
+    assert old_path.exists()
     assert new_path.exists()
+    assert (old_path / "a.txt").read_text() == "hello\n"
     assert (new_path / "a.txt").read_text() == "hello\n"
+
+
+def test_create_worktree_from_plain_directory_initializes_task_git_repo(tmp_path: Path) -> None:
+    source = tmp_path / "plain_project"
+    source.mkdir()
+    (source / "pyproject.toml").write_text("[project]\nname='plain-project'\n", encoding="utf-8")
+    (source / "a.txt").write_text("hello\n", encoding="utf-8")
+
+    worktree_path = create_worktree(source, task_id=7, worktrees_root=tmp_path / "wt")
+
+    assert worktree_path.exists()
+    assert (worktree_path / "a.txt").read_text() == "hello\n"
+
+    branch = subprocess.run(
+        ["git", "-C", str(worktree_path), "rev-parse", "--abbrev-ref", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert branch == "task-7"

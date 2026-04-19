@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 from src.tracker import Tracker
@@ -25,32 +24,6 @@ def _project_name(markdown: str) -> str:
             return match.group(1).strip()
     raise AssertionError("task markdown must include a 'Project: <name>' line")
 
-
-def _git_cmd(target_repo: Path, *args: str) -> list[str]:
-    local_git_dir = target_repo / ".git"
-    hidden_git_dir = target_repo.parent / f".{target_repo.name}_git"
-    if local_git_dir.exists():
-        return ["git", "-C", str(target_repo), *args]
-    if hidden_git_dir.exists():
-        return [
-            "git",
-            f"--git-dir={hidden_git_dir}",
-            f"--work-tree={target_repo}",
-            *args,
-        ]
-    raise AssertionError(f"{target_repo} is not a git repo")
-
-
-def _assert_project_repo_ready(project_repo: Path) -> None:
-    branch = subprocess.run(
-        _git_cmd(project_repo, "rev-parse", "--abbrev-ref", "HEAD"),
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    assert branch == "main", f"{project_repo} must be on branch 'main', got '{branch}'"
-
-
 def seed(db_path: Path, *, tasks_root: Path, projects_root: Path) -> None:
     assert tasks_root.is_dir(), f"{tasks_root} missing"
     assert projects_root.is_dir(), f"{projects_root} missing"
@@ -66,7 +39,6 @@ def seed(db_path: Path, *, tasks_root: Path, projects_root: Path) -> None:
         project = _project_name(markdown)
         project_repo = projects_root / project
         assert project_repo.is_dir(), f"project repo missing: {project_repo}"
-        _assert_project_repo_ready(project_repo)
         spec_path = f"tasks/{markdown_file.name}"
         if (project, spec_path) in existing:
             continue

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import subprocess
 
 import pytest
 
@@ -14,16 +13,7 @@ def seeded(tmp_path: Path, tmp_db: Path, tmp_events: Path) -> dict[str, object]:
     projects_root = tmp_path / "projects"
     target = projects_root / "python_fixture"
     target.mkdir(parents=True)
-    subprocess.run(["git", "-C", str(target), "init", "-b", "main"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(target), "config", "user.email", "t@t"], check=True)
-    subprocess.run(["git", "-C", str(target), "config", "user.name", "t"], check=True)
     (target / "a.txt").write_text("hello\n")
-    subprocess.run(["git", "-C", str(target), "add", "-A"], check=True)
-    subprocess.run(
-        ["git", "-C", str(target), "-c", "commit.gpgsign=false", "commit", "-m", "init"],
-        check=True,
-        capture_output=True,
-    )
 
     tracker = Tracker(tmp_db)
     tracker.init_schema()

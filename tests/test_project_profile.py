@@ -66,3 +66,22 @@ def test_seed_reads_root_tasks_and_project_reference(tmp_path: Path, tmp_db: Pat
     assert len(rows) == 1
     assert rows[0].title == "Fix startup crash"
     assert rows[0].project == "android_demo"
+
+
+def test_seed_accepts_project_directory_without_git_repo(tmp_path: Path, tmp_db: Path) -> None:
+    tasks_root = tmp_path / "tasks"
+    projects_root = tmp_path / "projects"
+    project_dir = projects_root / "plain_python"
+    tasks_root.mkdir()
+    project_dir.mkdir(parents=True)
+    (project_dir / "pyproject.toml").write_text("[project]\nname='plain-python'\n", encoding="utf-8")
+    (tasks_root / "001_fix_bug.md").write_text(
+        "Project: plain_python\n\n# Fix plain project bug\n",
+        encoding="utf-8",
+    )
+
+    seed(tmp_db, tasks_root=tasks_root, projects_root=projects_root)
+
+    rows = list(Tracker(tmp_db).list_tasks())
+    assert len(rows) == 1
+    assert rows[0].project == "plain_python"

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-import subprocess
 
 import pytest
 
@@ -25,16 +24,6 @@ async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> 
         ignore=shutil.ignore_patterns(".pytest_cache", "__pycache__", ".venv", ".DS_Store"),
     )
     shutil.copytree(source_tasks, tasks_root)
-
-    subprocess.run(["git", "-C", str(project_repo), "init", "-b", "main"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(project_repo), "config", "user.email", "t@t"], check=True)
-    subprocess.run(["git", "-C", str(project_repo), "config", "user.name", "t"], check=True)
-    subprocess.run(["git", "-C", str(project_repo), "add", "-A"], check=True)
-    subprocess.run(
-        ["git", "-C", str(project_repo), "-c", "commit.gpgsign=false", "commit", "-m", "init"],
-        check=True,
-        capture_output=True,
-    )
 
     db_path = tmp_path / "tasks.db"
     events_path = tmp_path / "events.jsonl"

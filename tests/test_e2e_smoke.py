@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
-import subprocess
 
 import pytest
 
@@ -29,19 +28,6 @@ async def test_solve_task_001_with_real_agents(tmp_path: Path) -> None:
 
     if (destination / ".git").exists():
         shutil.rmtree(destination / ".git")
-
-    subprocess.run(["git", "-C", str(destination), "init", "-b", "main"], check=True, capture_output=True)
-    subprocess.run(["git", "-C", str(destination), "config", "user.email", "t@t"], check=True)
-    subprocess.run(["git", "-C", str(destination), "config", "user.name", "t"], check=True)
-    subprocess.run(
-        ["git", "-C", str(destination), "-c", "commit.gpgsign=false", "add", "-A"],
-        check=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(destination), "-c", "commit.gpgsign=false", "commit", "-m", "init"],
-        check=True,
-        capture_output=True,
-    )
 
     tasks_root = tmp_path / "tasks"
     tasks_root.mkdir()

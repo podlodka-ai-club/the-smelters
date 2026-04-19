@@ -23,9 +23,7 @@ This repository contains the orchestration layer for a two-agent development sys
 
 The Python fixture is not part of the orchestrator runtime itself. It is a controlled target repo with 5 known bugs in small modules like `calc`, `strings`, `http_client`, `sorting`, and `cache`. The task files in `tasks/` all point at `Project: python_fixture`, so new contributors can run the full system against a predictable example first.
 
-After cloning this repository, `projects/python_fixture/` is just a normal folder. If you want to run the sample project through `seed.py` and `orchestrator.py`, initialize it locally as its own git repo on branch `main` first.
-
-Repeated runs are supported. If an earlier dry-run left behind missing worktree registrations, the orchestrator auto-prunes stale git worktree metadata before recreating `task-N` worktrees.
+After cloning this repository, `projects/python_fixture/` is ready to use as a normal folder. The orchestrator copies the target project into `worktrees/<project>/task-N`, initializes a temporary git repo inside that task directory, and uses that sandbox for coder/reviewer diffing.
 
 ## Pipeline
 
@@ -42,8 +40,8 @@ tasks/*.md
   -> printer.py / tui.py
 ```
 
-1. `seed.py` reads `tasks/*.md`, extracts `Project: ...`, validates `projects/<name>` is a git repo on `main`, and inserts tasks into `tasks.db`.
-2. `orchestrator.py` claims the next ready task, resolves its target repo from `task.project`, prunes stale worktree metadata, and creates an isolated git worktree.
+1. `seed.py` reads `tasks/*.md`, extracts `Project: ...`, validates `projects/<name>` exists, and inserts tasks into `tasks.db`.
+2. `orchestrator.py` claims the next ready task, resolves its target repo from `task.project`, copies it into a task sandbox, and initializes a temporary git repo there for diffing and review.
 3. `agents/coder.py` works inside that worktree and applies the requested fix.
 4. `agents/reviewer.py` verifies the change and approves or rejects it.
 5. `src/tracker.py` persists state transitions, while `src/events.py` writes the event log consumed by `printer.py` and `tui.py`.
@@ -57,7 +55,7 @@ tasks/*.md
 - `agents/runner.py`: subprocess wrapper for coder/reviewer agents.
 - `agents/fake_coder.py`, `agents/fake_reviewer.py`: deterministic test doubles used in automated tests.
 - `src/project_profile.py`: detects whether a target repo looks like Python, Android/Gradle, or generic.
-- `src/worktree.py`: git worktree creation and cleanup.
+- `src/worktree.py`: task sandbox creation and cleanup.
 
 ## Supported Agents
 
@@ -119,7 +117,7 @@ What the orchestration layer expects from any SDK-backed agent:
 
 - The agent is launched as a Python module: `python -m agents.<role> <task_id>`.
 - It reads task context from `TRACKER_DB` and `TASKS_ROOT`.
-- It runs inside the assigned git worktree.
+- It runs inside the assigned task sandbox.
 - It exits with code `0` on success and non-zero on failure.
 - Its last non-empty stdout line is strict JSON:
   - coder: `{"ok": true, "summary": "..."}`
@@ -204,8 +202,7 @@ In another terminal, watch execution with either:
 To connect a new repository to the orchestrator, add both the project repo and at least one task spec.
 
 1. Copy or clone the target repository into `projects/<project_name>/`.
-2. Make sure `projects/<project_name>/` is a standalone git repository on branch `main`.
-3. Ensure the repo already builds or tests locally with its own commands.
+2. Ensure the project already builds or tests locally with its own commands.
 4. Add one or more task files to `tasks/` and point them at the repo with `Project: <project_name>`.
 5. Run `seed.py` to load those tasks into `tasks.db`.
 6. Run `orchestrator.py --watch` to let the agents pick them up.
@@ -213,7 +210,6 @@ To connect a new repository to the orchestrator, add both the project repo and a
 Minimum project requirements:
 
 - The repo must live under `projects/`.
-- The repo must be a git repo with a valid `main` branch.
 - The repo should expose a clear verification path, for example `pytest` for Python or `./gradlew testDebugUnitTest` for Android.
 - The task spec must describe the expected fix clearly enough for coder and reviewer agents to act on it.
 
@@ -221,7 +217,6 @@ Example setup:
 
 ```bash
 git clone <repo-url> projects/my_android_app
-git -C projects/my_android_app checkout -B main
 ```
 
 Example task file:
@@ -250,16 +245,6 @@ Then load and run:
 ## How To Verify The System
 
 Use the Python fixture first. It is the reference example for onboarding and regression testing.
-
-Before using the bundled sample project as an actual target repo, initialize it once:
-
-```bash
-git -C projects/python_fixture init -b main
-git -C projects/python_fixture config user.email you@example.com
-git -C projects/python_fixture config user.name yourname
-git -C projects/python_fixture add -A
-git -C projects/python_fixture -c commit.gpgsign=false commit -m "init python_fixture"
-```
 
 ```bash
 .venv/bin/pytest

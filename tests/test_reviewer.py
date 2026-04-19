@@ -28,7 +28,7 @@ def test_build_user_prompt_mentions_committed_and_working_tree_diffs(monkeypatch
     monkeypatch.setattr(
         reviewer,
         "_load_task",
-        lambda task_id: (f"title-{task_id}", "tasks/001.md", "spec body"),
+        lambda task_id: (task_id, f"title-{task_id}", "tasks/001.md", "spec body"),
     )
     monkeypatch.setattr(
         reviewer,

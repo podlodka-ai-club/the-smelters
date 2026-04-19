@@ -9,8 +9,8 @@ Status = Literal["ready", "running", "review", "needs_fixes", "closed", "failed"
 @dataclass(slots=True)
 class Task:
     id: int
+    task_number: int
     title: str
-    project: str
     spec_path: str
     status: Status
     attempts: int

@@ -11,8 +11,8 @@ def test_task_and_agent_result_expose_expected_fields() -> None:
 
     assert task_field_names == [
         "id",
+        "task_number",
         "title",
-        "project",
         "spec_path",
         "status",
         "attempts",
@@ -26,9 +26,9 @@ def test_task_and_agent_result_expose_expected_fields() -> None:
 def test_task_and_agent_result_store_values() -> None:
     task = Task(
         id=1,
+        task_number=7,
         title="Fix bug",
-        project="python_fixture",
-        spec_path="tasks/001_fix_bug.md",
+        spec_path="tasks/python_fixture/7-fix-bug.md",
         status="ready",
         attempts=0,
         worktree=None,
@@ -38,7 +38,7 @@ def test_task_and_agent_result_store_values() -> None:
     result = AgentResult(exit_code=0, stdout_final="ok")
 
     assert task.status == "ready"
-    assert task.project == "python_fixture"
+    assert task.task_number == 7
     assert task.spec_path.endswith(".md")
     assert result.exit_code == 0
     assert result.stdout_final == "ok"

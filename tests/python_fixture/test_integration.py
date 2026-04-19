@@ -7,20 +7,15 @@ import pytest
 
 from orchestrator import Orchestrator
 from seed import seed
+from src.runtime_paths import project_runtime_paths
 from src.tracker import Tracker
 
 
-def _copy_python_fixture_tasks(source_tasks: Path, tasks_root: Path) -> None:
-    tasks_root.mkdir()
-    for task_file in source_tasks.glob("*.md"):
-        if task_file.read_text(encoding="utf-8").startswith("Project: python_fixture\n"):
-            shutil.copy2(task_file, tasks_root / task_file.name)
-
 
 @pytest.mark.asyncio
-async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> None:
-    source_project = Path(__file__).parent.parent / "projects" / "python_fixture"
-    source_tasks = Path(__file__).parent.parent / "tasks"
+async def test_project_scoped_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> None:
+    source_project = Path(__file__).parent.parent.parent / "projects" / "python_fixture"
+    source_tasks = Path(__file__).parent.parent.parent / "tasks" / "python_fixture"
 
     projects_root = tmp_path / "projects"
     tasks_root = tmp_path / "tasks"
@@ -30,13 +25,13 @@ async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> 
         project_repo,
         ignore=shutil.ignore_patterns(".pytest_cache", "__pycache__", ".venv", ".DS_Store"),
     )
-    _copy_python_fixture_tasks(source_tasks, tasks_root)
+    shutil.copytree(source_tasks, tasks_root / "python_fixture")
 
-    db_path = tmp_path / "tasks.db"
-    events_path = tmp_path / "events.jsonl"
-    seed(db_path, tasks_root=tasks_root, projects_root=projects_root)
+    runtime = project_runtime_paths(tmp_path, "python_fixture")
+    runtime.db_path.parent.mkdir(parents=True, exist_ok=True)
+    seed(runtime.db_path, project="python_fixture", tasks_root=tasks_root, projects_root=projects_root)
 
-    tracker = Tracker(db_path)
+    tracker = Tracker(runtime.db_path)
     tracker.init_schema()
 
     with pytest.MonkeyPatch.context() as monkeypatch:
@@ -44,10 +39,12 @@ async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> 
         monkeypatch.setenv("FAKE_REVIEWER", "approve")
         orchestrator = Orchestrator(
             tracker=tracker,
-            events_path=events_path,
+            project="python_fixture",
+            root_path=tmp_path,
+            events_path=runtime.events_path,
             projects_root=projects_root,
             tasks_root=tasks_root,
-            worktrees_root=tmp_path / "wt",
+            worktrees_root=runtime.worktrees_path,
             coder_role="fake_coder",
             reviewer_role="fake_reviewer",
             max_attempts=2,
@@ -56,7 +53,7 @@ async def test_root_tasks_drive_python_fixture_from_projects(tmp_path: Path) -> 
         )
         await orchestrator.run_until_empty()
 
-    rows = list(Tracker(db_path).list_tasks())
+    rows = list(Tracker(runtime.db_path).list_tasks())
     assert len(rows) == 5
-    assert {row.project for row in rows} == {"python_fixture"}
+    assert [row.task_number for row in rows] == [1, 2, 3, 4, 5]
     assert {row.status for row in rows} == {"closed"}

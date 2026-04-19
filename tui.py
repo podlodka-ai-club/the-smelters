@@ -10,29 +10,20 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Header, RichLog
 
-TASK_COLUMNS = ("id", "project", "status", "attempts", "title")
+from src.runtime_paths import project_runtime_paths
 
 
-def load_task_rows(db_path: Path) -> list[tuple[str, str, str, str, str]]:
+def load_task_rows(db_path: Path) -> list[tuple[str, str, str, str]]:
+    if not db_path.exists():
+        return []
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = list(
-            conn.execute(
-                "SELECT id, project, status, attempts, title FROM tasks ORDER BY id"
-            )
-        )
+        rows = list(conn.execute("SELECT task_number, status, attempts, title FROM tasks ORDER BY task_number"))
     finally:
         conn.close()
-
     return [
-        (
-            str(row["id"]),
-            row["project"],
-            row["status"],
-            str(row["attempts"]),
-            row["title"],
-        )
+        (str(row["task_number"]), row["status"], str(row["attempts"]), row["title"])
         for row in rows
     ]
 
@@ -62,22 +53,18 @@ class Dashboard(App):
 
     def on_mount(self) -> None:
         table = self.query_one("#tasks_table", DataTable)
-        table.add_columns(*TASK_COLUMNS)
+        table.add_columns("task", "status", "attempts", "title")
         table.cursor_type = "row"
         self.set_interval(0.5, self._refresh_tasks)
         self.set_interval(0.2, self._pull_events)
 
     def _refresh_tasks(self) -> None:
-        if not self.db_path.exists():
-            return
-
         table = self.query_one("#tasks_table", DataTable)
+        table.clear()
         try:
             rows = load_task_rows(self.db_path)
         except sqlite3.OperationalError:
             return
-
-        table.clear()
         for row in rows:
             table.add_row(
                 *row,
@@ -138,12 +125,13 @@ class Dashboard(App):
             )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--db", default="tasks.db", type=Path)
-    parser.add_argument("--events", default="events.jsonl", type=Path)
-    args = parser.parse_args()
-    Dashboard(db_path=args.db, events_path=args.events).run()
+    parser.add_argument("--project", required=True)
+    parser.add_argument("--root", default=Path.cwd(), type=Path)
+    args = parser.parse_args(argv)
+    runtime = project_runtime_paths(args.root.resolve(), args.project)
+    Dashboard(db_path=runtime.db_path, events_path=runtime.events_path).run()
     return 0
 
 

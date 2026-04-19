@@ -17,34 +17,37 @@ This repository contains the orchestration layer for a two-agent development sys
 
 ## What Is Here
 
-- `tasks/` stores shared task specs in Markdown. Each file must include `Project: <folder_name>`.
+- `tasks/<project>/` stores task specs for one selected project. Each file must include `Project: <folder_name>`.
 - `projects/` stores target repositories the agents work on.
+- `database/<project>/tasks.db` stores task state for one project.
+- `database/<project>/events.jsonl` stores the event stream for one project.
+- `worktrees/<project>/` stores isolated task sandboxes for one project.
 - `projects/python_fixture/` is a sample Python repo with intentionally failing behavior and matching tests. It exists to prove that the orchestration pipeline works before pointing the system at a real Android project.
 
-The Python fixture is not part of the orchestrator runtime itself. It is a controlled target repo with 5 known bugs in small modules like `calc`, `strings`, `http_client`, `sorting`, and `cache`. The task files in `tasks/` all point at `Project: python_fixture`, so new contributors can run the full system against a predictable example first.
+The Python fixture is not part of the orchestrator runtime itself. It is a controlled target repo with 5 known bugs in small modules like `calc`, `strings`, `http_client`, `sorting`, and `cache`. The task files in `tasks/python_fixture/` all point at `Project: python_fixture`, so new contributors can run the full system against a predictable example first.
 
 After cloning this repository, `projects/python_fixture/` is ready to use as a normal folder. The orchestrator copies the target project into `worktrees/<project>/task-N`, initializes a temporary git repo inside that task directory, and uses that sandbox for coder/reviewer diffing.
 
 ## Pipeline
 
 ```text
-tasks/*.md
-  -> seed.py
-  -> tasks.db
-  -> orchestrator.py
-  -> projects/<task.project>
+tasks/<project>/*.md
+  -> seed.py --project <project>
+  -> database/<project>/tasks.db
+  -> orchestrator.py --project <project>
+  -> projects/<project>
   -> worktrees/<project>/task-N
   -> agents/coder.py
   -> agents/reviewer.py
-  -> events.jsonl
-  -> printer.py / tui.py
+  -> database/<project>/events.jsonl
+  -> printer.py --project <project> / tui.py --project <project>
 ```
 
-1. `seed.py` reads `tasks/*.md`, extracts `Project: ...`, validates `projects/<name>` exists, and inserts tasks into `tasks.db`.
-2. `orchestrator.py` claims the next ready task, resolves its target repo from `task.project`, copies it into a task sandbox, and initializes a temporary git repo there for diffing and review.
+1. `seed.py --project <name>` reads `tasks/<project>/*.md`, extracts `Project: ...`, validates `projects/<name>` exists, parses the task number from the filename, and inserts tasks into `database/<project>/tasks.db`.
+2. `orchestrator.py --project <name>` claims the next ready task from that project's database, copies `projects/<project>/` into a task sandbox, and initializes a temporary git repo there for diffing and review.
 3. `agents/coder.py` works inside that worktree and applies the requested fix.
 4. `agents/reviewer.py` verifies the change and approves or rejects it.
-5. `src/tracker.py` persists state transitions, while `src/events.py` writes the event log consumed by `printer.py` and `tui.py`.
+5. `src/tracker.py` persists state transitions, while `src/events.py` writes the project-local event log consumed by `printer.py` and `tui.py`.
 
 ## Scripts And Modules
 
@@ -186,15 +189,33 @@ When platform agents become common, the next clean step is to add explicit role 
 ```bash
 uv venv
 uv pip install -e ".[dev]"
-.venv/bin/python seed.py
-.venv/bin/python orchestrator.py --watch
+.venv/bin/python seed.py --project python_fixture
+.venv/bin/python orchestrator.py --project python_fixture --watch
+```
+
+To process tasks for only one project:
+
+```bash
+.venv/bin/python orchestrator.py --project python_fixture --watch
+```
+
+To process only one specific task:
+
+```bash
+.venv/bin/python orchestrator.py --task 1 --watch
+```
+
+You can combine both filters:
+
+```bash
+.venv/bin/python orchestrator.py --project DemoApp --task 7 --watch
 ```
 
 In another terminal, watch execution with either:
 
 ```bash
-.venv/bin/python printer.py
-.venv/bin/python tui.py
+.venv/bin/python printer.py --project python_fixture
+.venv/bin/python tui.py --project python_fixture
 ```
 
 ## Adding A New Project
@@ -203,9 +224,9 @@ To connect a new repository to the orchestrator, add both the project repo and a
 
 1. Copy or clone the target repository into `projects/<project_name>/`.
 2. Ensure the project already builds or tests locally with its own commands.
-4. Add one or more task files to `tasks/` and point them at the repo with `Project: <project_name>`.
-5. Run `seed.py` to load those tasks into `tasks.db`.
-6. Run `orchestrator.py --watch` to let the agents pick them up.
+4. Add one or more task files to `tasks/<project_name>/` and point them at the repo with `Project: <project_name>`.
+5. Run `seed.py --project <project_name>` to load those tasks into `database/<project_name>/tasks.db`.
+6. Run `orchestrator.py --project <project_name> --watch` to let the agents pick them up.
 
 Minimum project requirements:
 
@@ -235,11 +256,17 @@ Project: my_android_app
 - No unrelated files are changed
 ```
 
+Recommended location for that file:
+
+```text
+tasks/my_android_app/001-fix-login-crash.md
+```
+
 Then load and run:
 
 ```bash
-.venv/bin/python seed.py
-.venv/bin/python orchestrator.py --watch
+.venv/bin/python seed.py --project my_android_app
+.venv/bin/python orchestrator.py --project my_android_app --watch
 ```
 
 ## How To Verify The System
@@ -250,7 +277,7 @@ Use the Python fixture first. It is the reference example for onboarding and reg
 .venv/bin/pytest
 ```
 
-Expected result: the repository test suite passes, including the integration path that seeds root `tasks/`, targets `projects/python_fixture/`, and closes all 5 sample tasks with fake agents.
+Expected result: the repository test suite passes, including the project-local integration path under `tests/python_fixture/` that seeds `tasks/python_fixture/`, writes `database/python_fixture/tasks.db`, targets `projects/python_fixture/`, and closes all 5 sample tasks with fake agents.
 
 Live agent smoke tests require `ANTHROPIC_API_KEY`:
 

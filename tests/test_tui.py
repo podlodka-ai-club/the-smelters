@@ -1,21 +1,24 @@
 from __future__ import annotations
 
-from tui import TASK_COLUMNS, load_task_rows
+from pathlib import Path
+
+import pytest
+
 from src.tracker import Tracker
+from tui import load_task_rows, main
 
 
-def test_load_task_rows_includes_project_column(tmp_db) -> None:
+def test_load_task_rows_returns_task_numbers_in_order(tmp_db: Path) -> None:
     tracker = Tracker(tmp_db)
     tracker.init_schema()
-    task_id = tracker.insert_task(
-        title="Fix startup crash",
-        project="demo_app",
-        spec_path="tasks/example.md",
-    )
-    tracker.set_status(task_id, "review")
-    tracker.increment_attempts(task_id)
+    tracker.insert_task(task_number=9, title="later", spec_path="tasks/DemoApp/9-later.md")
+    tracker.insert_task(task_number=2, title="earlier", spec_path="tasks/DemoApp/2-earlier.md")
 
     rows = load_task_rows(tmp_db)
 
-    assert TASK_COLUMNS == ("id", "project", "status", "attempts", "title")
-    assert rows == [("1", "demo_app", "review", "1", "Fix startup crash")]
+    assert rows == [("2", "ready", "0", "earlier"), ("9", "ready", "0", "later")]
+
+
+def test_main_requires_project() -> None:
+    with pytest.raises(SystemExit):
+        main([])

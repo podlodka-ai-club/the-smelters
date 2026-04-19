@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import time
 
+from src.runtime_paths import project_runtime_paths
+
 
 COLORS = {
     "orchestrator": "\033[36m",
@@ -62,12 +64,14 @@ def follow(path: Path) -> None:
         time.sleep(0.1)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--events", default="events.jsonl", type=Path)
-    args = parser.parse_args()
+    parser.add_argument("--project", required=True)
+    parser.add_argument("--root", default=Path.cwd(), type=Path)
+    args = parser.parse_args(argv)
+    runtime = project_runtime_paths(args.root.resolve(), args.project)
     try:
-        follow(args.events)
+        follow(runtime.events_path)
     except KeyboardInterrupt:
         return 0
     return 0

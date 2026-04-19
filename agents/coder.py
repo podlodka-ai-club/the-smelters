@@ -58,21 +58,21 @@ async def _can_use_tool(
     return PermissionResultAllow()
 
 
-def _load_task(task_id: int) -> tuple[str, str, str | None, str]:
+def _load_task(task_id: int) -> tuple[int, str, str, str | None, str]:
     db_path = Path(os.environ.get("TRACKER_DB", "tasks.db"))
     tracker = Tracker(db_path)
     row = tracker.get_task(task_id)
-    tasks_root = Path(os.environ.get("TASKS_ROOT", db_path.parent / "tasks"))
-    spec_body = (tasks_root.parent / row.spec_path).read_text(encoding="utf-8")
-    return row.title, row.spec_path, row.review_notes, spec_body
+    repo_root = Path(os.environ.get("REPO_ROOT", Path.cwd()))
+    spec_body = (repo_root / row.spec_path).read_text(encoding="utf-8")
+    return row.task_number, row.title, row.spec_path, row.review_notes, spec_body
 
 
 def _build_user_prompt(task_id: int) -> str:
-    title, spec_path, notes, spec_body = _load_task(task_id)
+    task_number, title, spec_path, notes, spec_body = _load_task(task_id)
     profile = detect_project_profile(Path.cwd())
     prior_notes = f"\n\nPrevious review said:\n{notes}\n" if notes else ""
     return (
-        f"Task id: {task_id}\n"
+        f"Task number: {task_number}\n"
         f"Title: {title}\n"
         f"Project type: {profile.label}\n"
         f"Spec path: {spec_path}{prior_notes}\n"

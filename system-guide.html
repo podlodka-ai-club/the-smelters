@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multi-Agent Dev Assistant Guide</title>
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --bg-soft: #e6dcc8;
+      --panel: rgba(255, 249, 238, 0.82);
+      --panel-strong: rgba(255, 252, 247, 0.94);
+      --ink: #1e1d1a;
+      --muted: #605c52;
+      --line: rgba(50, 43, 27, 0.12);
+      --accent: #bb4b1e;
+      --accent-deep: #8a2a10;
+      --accent-soft: #f1b878;
+      --teal: #1d6d71;
+      --olive: #566036;
+      --shadow: 0 24px 80px rgba(60, 40, 10, 0.12);
+      --radius: 28px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(187, 75, 30, 0.18), transparent 30%),
+        radial-gradient(circle at 85% 12%, rgba(29, 109, 113, 0.18), transparent 24%),
+        linear-gradient(135deg, #f4f0e6 0%, #e9e2d5 50%, #efe9df 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before,
+    body::after {
+      content: "";
+      position: fixed;
+      inset: auto;
+      border-radius: 999px;
+      filter: blur(6px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body::before {
+      width: 24rem;
+      height: 24rem;
+      right: -7rem;
+      top: 7rem;
+      background: rgba(187, 75, 30, 0.11);
+    }
+
+    body::after {
+      width: 28rem;
+      height: 28rem;
+      left: -9rem;
+      bottom: 8rem;
+      background: rgba(29, 109, 113, 0.10);
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 2rem 0 5rem;
+    }
+
+    .hero {
+      position: relative;
+      padding: 4.5rem clamp(1.4rem, 3vw, 3rem);
+      border-radius: 40px;
+      overflow: hidden;
+      background:
+        linear-gradient(140deg, rgba(255, 253, 249, 0.88), rgba(244, 231, 213, 0.72)),
+        linear-gradient(135deg, rgba(187, 75, 30, 0.08), rgba(29, 109, 113, 0.08));
+      border: 1px solid rgba(77, 52, 22, 0.08);
+      box-shadow: var(--shadow);
+      animation: rise 700ms ease-out both;
+    }
+
+    .hero::before {
+      content: "";
+      position: absolute;
+      inset: 1rem;
+      border-radius: 28px;
+      border: 1px solid rgba(94, 79, 49, 0.10);
+      pointer-events: none;
+    }
+
+    .eyebrow,
+    .section-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding: 0.5rem 0.9rem;
+      border-radius: 999px;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      font-size: 0.84rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(255, 247, 235, 0.85);
+      border: 1px solid rgba(122, 83, 33, 0.12);
+      color: var(--accent-deep);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      line-height: 0.95;
+      letter-spacing: -0.03em;
+    }
+
+    h1 {
+      margin-top: 1.1rem;
+      font-size: clamp(3rem, 8vw, 6.6rem);
+      max-width: 12ch;
+    }
+
+    .hero p {
+      max-width: 40rem;
+      margin: 1.4rem 0 0;
+      font-size: clamp(1.05rem, 2vw, 1.22rem);
+      line-height: 1.65;
+      color: var(--muted);
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 0.9fr;
+      gap: 1.25rem;
+      margin-top: 2rem;
+    }
+
+    .hero-note,
+    .mini-panel,
+    .card,
+    .step,
+    .timeline-item,
+    .code-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 12px 30px rgba(71, 55, 23, 0.05);
+    }
+
+    .hero-note,
+    .mini-panel {
+      padding: 1.25rem 1.35rem;
+    }
+
+    .hero-note strong,
+    .mini-panel strong {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      letter-spacing: 0.01em;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1.2rem;
+      margin-top: 1.4rem;
+    }
+
+    section {
+      margin-top: 1.5rem;
+      animation: rise 700ms ease-out both;
+      animation-delay: 120ms;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .section-head h2 {
+      font-size: clamp(2rem, 4vw, 3rem);
+    }
+
+    .section-head p {
+      max-width: 36rem;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .card {
+      padding: 1.5rem;
+    }
+
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    .card h3 {
+      font-size: 1.5rem;
+      margin-bottom: 0.6rem;
+    }
+
+    .card p,
+    .card li,
+    .step p,
+    .timeline-item p {
+      color: var(--muted);
+      line-height: 1.65;
+      margin: 0;
+    }
+
+    .metric {
+      display: flex;
+      gap: 0.9rem;
+      align-items: baseline;
+      margin-bottom: 0.8rem;
+    }
+
+    .metric strong {
+      font-size: 2.1rem;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      color: var(--accent-deep);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding: 1.2rem 1.25rem 1.2rem 4rem;
+    }
+
+    .timeline-item::before {
+      content: attr(data-step);
+      position: absolute;
+      left: 1rem;
+      top: 1rem;
+      width: 2.15rem;
+      height: 2.15rem;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent-soft));
+      color: #fffaf4;
+    }
+
+    .steps {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .step {
+      padding: 1.2rem 1.25rem;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 0.35rem;
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      font-size: 1.18rem;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 0.95rem/1.6 "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+      color: #fef4e8;
+    }
+
+    code {
+      font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
+      font-size: 0.95em;
+    }
+
+    .code-panel {
+      padding: 1.1rem 1.2rem;
+      background:
+        linear-gradient(135deg, rgba(27, 22, 16, 0.94), rgba(59, 41, 22, 0.94));
+      border-color: rgba(255, 212, 160, 0.12);
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-top: 1rem;
+    }
+
+    .pill {
+      padding: 0.45rem 0.8rem;
+      border-radius: 999px;
+      background: rgba(86, 96, 54, 0.1);
+      border: 1px solid rgba(86, 96, 54, 0.15);
+      font-family: "Avenir Next Condensed", "Franklin Gothic Medium", "Arial Narrow", sans-serif;
+      font-size: 0.85rem;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--olive);
+    }
+
+    .footer-note {
+      margin-top: 1.5rem;
+      padding: 1.15rem 1.25rem;
+      border-radius: 22px;
+      background: rgba(29, 109, 113, 0.09);
+      border: 1px solid rgba(29, 109, 113, 0.12);
+      color: #234b4d;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 980px) {
+      .hero-grid,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .span-4,
+      .span-5,
+      .span-6,
+      .span-7,
+      .span-8,
+      .span-12 {
+        grid-column: span 1;
+      }
+
+      .section-head {
+        flex-direction: column;
+        align-items: start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <span class="eyebrow">Operator Guide</span>
+      <h1>How To Run The Multi-Agent Dev Assistant</h1>
+      <p>
+        This system takes a queue of failing-test tasks, creates an isolated git worktree
+        per task, lets a Coder agent make a fix, and lets a Reviewer agent accept or reject
+        the result. Everything is tracked through SQLite plus an append-only event log.
+      </p>
+
+      <div class="hero-grid">
+        <div class="hero-note">
+          <strong>Core flow</strong>
+          <div class="pill-row">
+            <span class="pill">ready</span>
+            <span class="pill">running</span>
+            <span class="pill">review</span>
+            <span class="pill">closed</span>
+          </div>
+        </div>
+        <div class="mini-panel">
+          <strong>What matters operationally</strong>
+          Run the system with <code>.venv/bin/python</code> so the agent modules resolve inside
+          task worktrees and the fake or real agent entrypoints stay importable.
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <span class="section-tag">System Map</span>
+          <h2>Who Does What</h2>
+        </div>
+        <p>The pieces are intentionally narrow. That keeps the control loop easy to debug and lets you inspect one artifact at a time.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card span-4">
+          <div class="metric"><strong>seed.py</strong></div>
+          <p>Scans <code>tasks/*.md</code>, reads each task's <code>Project:</code> line, and inserts rows into <code>tasks.db</code> as <code>ready</code>.</p>
+        </article>
+        <article class="card span-4">
+          <div class="metric"><strong>orchestrator.py</strong></div>
+          <p>Claims tasks, creates worktrees, runs Coder then Reviewer, and moves tasks to <code>needs_fixes</code>, <code>closed</code>, or <code>failed</code>.</p>
+        </article>
+        <article class="card span-4">
+          <div class="metric"><strong>printer.py / tui.py</strong></div>
+          <p>Read-only monitoring layers over <code>events.jsonl</code> and <code>tasks.db</code>. They never mutate task state.</p>
+        </article>
+        <article class="card span-6">
+          <h3>State Store</h3>
+          <p><code>src/tracker.py</code> owns SQLite CRUD, attempt counters, review notes, and the atomic <code>claim_next_ready_task()</code> transition.</p>
+        </article>
+        <article class="card span-6">
+          <h3>Execution Layer</h3>
+          <p><code>agents/runner.py</code> spawns agent processes, enforces timeouts, and emits process-level events. The agents themselves stay small entrypoints.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <span class="section-tag">Quick Start</span>
+          <h2>Run It In Four Moves</h2>
+        </div>
+        <p>Use the fake path first. It validates orchestration, eventing, retries, and monitoring before you spend tokens on the real API.</p>
+      </div>
+
+      <div class="grid">
+        <div class="step span-6">
+          <strong>1. Create the environment</strong>
+          <div class="code-panel"><pre>uv venv
+uv pip install -e ".[dev]"</pre></div>
+        </div>
+        <div class="step span-6">
+          <strong>2. Seed the task queue</strong>
+          <div class="code-panel"><pre>.venv/bin/python seed.py</pre></div>
+        </div>
+        <div class="step span-6">
+          <strong>3. Start the orchestrator</strong>
+          <div class="code-panel"><pre>.venv/bin/python orchestrator.py --watch</pre></div>
+        </div>
+        <div class="step span-6">
+          <strong>4. Watch the system</strong>
+          <div class="code-panel"><pre>.venv/bin/python printer.py
+.venv/bin/python tui.py</pre></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <span class="section-tag">Workflow</span>
+          <h2>What Happens To One Task</h2>
+        </div>
+        <p>Every task gets its own branch and worktree. Nothing is shared across task sandboxes except the central tracker and event log.</p>
+      </div>
+
+      <div class="timeline">
+        <article class="timeline-item" data-step="1">
+          <h3>Claim</h3>
+          <p>The orchestrator picks the lowest-id <code>ready</code> task and marks it <code>running</code>.</p>
+        </article>
+        <article class="timeline-item" data-step="2">
+          <h3>Isolate</h3>
+          <p>A dedicated <code>task-&lt;id&gt;</code> worktree is created under <code>worktrees/</code>. The task record stores both branch and path.</p>
+        </article>
+        <article class="timeline-item" data-step="3">
+          <h3>Code</h3>
+          <p>The Coder agent reads the spec, edits only inside the worktree, and prints a final JSON line describing the attempt.</p>
+        </article>
+        <article class="timeline-item" data-step="4">
+          <h3>Review</h3>
+          <p>The Reviewer runs tests, inspects the diff, and emits a strict JSON verdict. Malformed output is treated as rejection.</p>
+        </article>
+        <article class="timeline-item" data-step="5">
+          <h3>Close Or Retry</h3>
+          <p>If approved, the task closes. Otherwise it returns to <code>ready</code> with review notes until the attempt budget is exhausted.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <span class="section-tag">Modes</span>
+          <h2>Fake Mode vs Live Mode</h2>
+        </div>
+        <p>Both modes use the same orchestrator. Only the agent entrypoints differ.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card span-6">
+          <h3>Fake Mode</h3>
+          <p>Use <code>FAKE_CODER</code> and <code>FAKE_REVIEWER</code> scenarios to prove retries, crashes, malformed verdicts, and happy-path closes without touching the Claude API.</p>
+          <div class="pill-row">
+            <span class="pill">ok</span>
+            <span class="pill">crash</span>
+            <span class="pill">timeout</span>
+            <span class="pill">reject</span>
+            <span class="pill">malformed</span>
+          </div>
+        </article>
+        <article class="card span-6">
+          <h3>Live Mode</h3>
+          <p>Run the real SDK-backed agents only when <code>ANTHROPIC_API_KEY</code> is available and you want to validate an actual end-to-end bug-fix path.</p>
+          <div class="code-panel"><pre>ANTHROPIC_API_KEY=... .venv/bin/pytest -m live</pre></div>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <span class="section-tag">Artifacts</span>
+          <h2>Where To Look When Something Breaks</h2>
+        </div>
+        <p>You rarely need to guess. Most failures leave a trace in one of these files or directories.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card span-5">
+          <h3><code>tasks.db</code></h3>
+          <p>Source of truth for task status, attempts, worktree path, branch, and review notes.</p>
+        </article>
+        <article class="card span-7">
+          <h3><code>events.jsonl</code></h3>
+          <p>Append-only execution timeline. This is the fastest way to see whether the system failed in claim, worktree creation, Coder, Reviewer, or final state transition.</p>
+        </article>
+        <article class="card span-6">
+          <h3><code>worktrees/task-&lt;id&gt;</code></h3>
+          <p>Exact sandbox that the agent modified. Use it to inspect diffs, rerun tests, or compare against <code>main</code>.</p>
+        </article>
+        <article class="card span-6">
+          <h3><code>tasks/*.md</code></h3>
+          <p>Operator-facing task definitions. Each one names the failing test and the acceptance criteria that the Coder and Reviewer should obey.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <span class="section-tag">Safety</span>
+          <h2>Operational Rules</h2>
+        </div>
+        <p>These are the constraints that keep the system predictable instead of “agentic” in the bad sense.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card span-4">
+          <h3>One task at a time</h3>
+          <p>The orchestrator is intentionally serial. Concurrency is a future extension, not a hidden default.</p>
+        </article>
+        <article class="card span-4">
+          <h3>One worktree per task</h3>
+          <p>Edits are isolated by branch and path, which makes inspection, cleanup, and retries tractable.</p>
+        </article>
+        <article class="card span-4">
+          <h3>Evidence before claims</h3>
+          <p>Use <code>.venv/bin/pytest</code>, event logs, and task rows as evidence. Don’t infer success from “it probably worked.”</p>
+        </article>
+      </div>
+
+      <div class="footer-note">
+        The current repository already supports fake-agent dry-runs, retry loops, malformed reviewer handling, printer/TUI monitoring, and a skip-safe live smoke test. The remaining unproven path is a real Claude API execution with a valid <code>ANTHROPIC_API_KEY</code>.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

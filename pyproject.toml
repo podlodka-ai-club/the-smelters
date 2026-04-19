@@ -1,0 +1,28 @@
+[project]
+name = "sprint-hackaton-multiagent"
+version = "0.1.0"
+description = "Multi-agent dev assistant (hackathon)"
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk>=0.1.0",
+    "textual>=0.60",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "live: hits the real Claude API (skipped by default)",
+]
+addopts = "-ra --strict-markers -m 'not live'"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "agents*"]
+exclude = ["tests*", "projects*", "worktrees*", "docs*"]

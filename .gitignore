@@ -1,0 +1,13 @@
+.worktrees/
+.venv/
+__pycache__/
+.DS_Store
+*.pyc
+*.egg-info/
+tasks.db
+events.jsonl
+worktrees/
+.pytest_cache/
+target_repo/.git/
+.target_repo_git/
+projects/*/.git/

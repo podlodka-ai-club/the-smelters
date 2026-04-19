@@ -2,6 +2,19 @@
 
 This repository contains the orchestration layer for a two-agent development system built on the Claude Agent SDK. The root project does not implement product logic itself; it manages tasks, routes them to the correct repository in `projects/`, and tracks execution.
 
+## Table Of Contents
+
+- [What Is Here](#what-is-here)
+- [Pipeline](#pipeline)
+- [Scripts And Modules](#scripts-and-modules)
+- [Supported Agents](#supported-agents)
+- [Adding A New Agent Provider](#adding-a-new-agent-provider)
+- [Adding Another Agent SDK](#adding-another-agent-sdk)
+- [Adding Platform-Specific Agents](#adding-platform-specific-agents)
+- [Getting Started](#getting-started)
+- [Adding A New Project](#adding-a-new-project)
+- [How To Verify The System](#how-to-verify-the-system)
+
 ## What Is Here
 
 - `tasks/` stores shared task specs in Markdown. Each file must include `Project: <folder_name>`.

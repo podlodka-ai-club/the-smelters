@@ -1,6 +1,6 @@
 Project: DemoApp
 
-# Task 6: Favorites/Bookmarks System
+# Favorites/Bookmarks System
 
 ## Summary
 

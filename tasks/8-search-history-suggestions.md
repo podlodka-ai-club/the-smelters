@@ -1,6 +1,6 @@
 Project: DemoApp
 
-# Task 8: Search History & Suggestions
+# Search History & Suggestions
 
 ## Summary
 

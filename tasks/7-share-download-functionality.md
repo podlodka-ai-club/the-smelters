@@ -1,6 +1,6 @@
 Project: DemoApp
 
-# Task 7: Share & Download Functionality
+# Share & Download Functionality
 
 ## Summary
 

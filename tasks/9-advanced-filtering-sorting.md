@@ -1,6 +1,6 @@
 Project: DemoApp
 
-# Task 9: Advanced Filtering & Sorting
+# Advanced Filtering & Sorting
 
 ## Summary
 

@@ -30,10 +30,10 @@ async def test_solve_task_001_with_real_agents(tmp_path: Path) -> None:
         shutil.rmtree(destination / ".git")
 
     tasks_root = tmp_path / "tasks"
-    tasks_root.mkdir()
+    (tasks_root / "python_fixture").mkdir(parents=True)
     shutil.copy2(
-        Path(__file__).parent.parent / "tasks" / "1-divide-by-zero.md",
-        tasks_root / "1-divide-by-zero.md",
+        Path(__file__).parent.parent / "tasks" / "python_fixture" / "1-divide-by-zero.md",
+        tasks_root / "python_fixture" / "1-divide-by-zero.md",
     )
 
     db_path = tmp_path / "tasks.db"

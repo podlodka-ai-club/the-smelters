@@ -17,18 +17,18 @@ This repository contains the orchestration layer for a two-agent development sys
 
 ## What Is Here
 
-- `tasks/` stores shared task specs in Markdown. Each file must include `Project: <folder_name>`.
+- `tasks/` stores task specs grouped by project under `tasks/<project>/`. Each file must include `Project: <folder_name>`.
 - `projects/` stores target repositories the agents work on.
 - `projects/python_fixture/` is a sample Python repo with intentionally failing behavior and matching tests. It exists to prove that the orchestration pipeline works before pointing the system at a real Android project.
 
-The Python fixture is not part of the orchestrator runtime itself. It is a controlled target repo with 5 known bugs in small modules like `calc`, `strings`, `http_client`, `sorting`, and `cache`. The task files in `tasks/` all point at `Project: python_fixture`, so new contributors can run the full system against a predictable example first.
+The Python fixture is not part of the orchestrator runtime itself. It is a controlled target repo with 5 known bugs in small modules like `calc`, `strings`, `http_client`, `sorting`, and `cache`. The task files in `tasks/python_fixture/` all point at `Project: python_fixture`, so new contributors can run the full system against a predictable example first.
 
 After cloning this repository, `projects/python_fixture/` is ready to use as a normal folder. The orchestrator copies the target project into `worktrees/<project>/task-N`, initializes a temporary git repo inside that task directory, and uses that sandbox for coder/reviewer diffing.
 
 ## Pipeline
 
 ```text
-tasks/*.md
+tasks/<project>/*.md
   -> seed.py
   -> tasks.db
   -> orchestrator.py
@@ -40,7 +40,7 @@ tasks/*.md
   -> printer.py / tui.py
 ```
 
-1. `seed.py` reads `tasks/*.md`, extracts `Project: ...`, validates `projects/<name>` exists, and inserts tasks into `tasks.db`.
+1. `seed.py` reads `tasks/<project>/*.md` recursively, extracts `Project: ...`, validates `projects/<name>` exists, and inserts tasks into `tasks.db`.
 2. `orchestrator.py` claims the next ready task, resolves its target repo from `task.project`, copies it into a task sandbox, and initializes a temporary git repo there for diffing and review.
 3. `agents/coder.py` works inside that worktree and applies the requested fix.
 4. `agents/reviewer.py` verifies the change and approves or rejects it.
@@ -203,7 +203,7 @@ To connect a new repository to the orchestrator, add both the project repo and a
 
 1. Copy or clone the target repository into `projects/<project_name>/`.
 2. Ensure the project already builds or tests locally with its own commands.
-4. Add one or more task files to `tasks/` and point them at the repo with `Project: <project_name>`.
+4. Add one or more task files to `tasks/<project_name>/` and point them at the repo with `Project: <project_name>`.
 5. Run `seed.py` to load those tasks into `tasks.db`.
 6. Run `orchestrator.py --watch` to let the agents pick them up.
 
@@ -235,6 +235,12 @@ Project: my_android_app
 - No unrelated files are changed
 ```
 
+Recommended location for that file:
+
+```text
+tasks/my_android_app/001-fix-login-crash.md
+```
+
 Then load and run:
 
 ```bash
@@ -250,7 +256,7 @@ Use the Python fixture first. It is the reference example for onboarding and reg
 .venv/bin/pytest
 ```
 
-Expected result: the repository test suite passes, including the integration path that seeds root `tasks/`, targets `projects/python_fixture/`, and closes all 5 sample tasks with fake agents.
+Expected result: the repository test suite passes, including the integration path that seeds `tasks/python_fixture/`, targets `projects/python_fixture/`, and closes all 5 sample tasks with fake agents.
 
 Live agent smoke tests require `ANTHROPIC_API_KEY`:
 

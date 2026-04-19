@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Workaround: the Compose BOM pins androidx.drawerlayout:drawerlayout to 1.0.0 which does not
+  declare the 'drawerLayoutStyle' attribute. Material3 themes reference this attribute in their
+  style definitions, so AAPT fails to link the test APK's merged resources unless the attr is
+  declared here. DrawerLayout 1.1.1+ would declare it, but the BOM's strict constraint prevents
+  upgrading, hence the explicit declaration.
+-->
+<resources>
+    <attr name="drawerLayoutStyle" format="reference"/>
+</resources>

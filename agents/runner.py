@@ -22,7 +22,7 @@ async def run_agent(
         stderr=asyncio.subprocess.PIPE,
         cwd=task.worktree,
     )
-    emit_event(events_path, task_id=task.id, actor=role, type="agent_started", pid=process.pid)
+    emit_event(events_path, task_id=task.task_number, actor=role, type="agent_started", pid=process.pid)
 
     try:
         stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout)
@@ -31,7 +31,7 @@ async def run_agent(
         await process.wait()
         emit_event(
             events_path,
-            task_id=task.id,
+            task_id=task.task_number,
             actor=role,
             type="agent_finished",
             exit_code=-1,
@@ -51,7 +51,7 @@ async def run_agent(
     exit_code = process.returncode if process.returncode is not None else -1
     emit_event(
         events_path,
-        task_id=task.id,
+        task_id=task.task_number,
         actor=role,
         type="agent_finished",
         exit_code=exit_code,

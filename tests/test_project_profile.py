@@ -34,7 +34,7 @@ def test_detect_android_profile_from_gradle_markers(tmp_path: Path) -> None:
     assert "./gradlew assembleDebug" in profile.reviewer_verification
 
 
-def test_seed_reads_nested_project_tasks_and_project_reference(tmp_path: Path, tmp_db: Path) -> None:
+def test_seed_reads_nested_project_tasks_and_task_number(tmp_path: Path, tmp_db: Path) -> None:
     tasks_root = tmp_path / "tasks"
     projects_root = tmp_path / "projects"
     repo = projects_root / "android_demo"
@@ -43,7 +43,7 @@ def test_seed_reads_nested_project_tasks_and_project_reference(tmp_path: Path, t
     repo.mkdir(parents=True)
     (repo / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
     (repo / "settings.gradle.kts").write_text("rootProject.name = \"demo\"\n", encoding="utf-8")
-    (project_tasks / "001_fix_crash.md").write_text(
+    (project_tasks / "1-fix-crash.md").write_text(
         "Project: android_demo\n\n# Fix startup crash\n\n## Failing test\nmanual\n",
         encoding="utf-8",
     )
@@ -60,14 +60,14 @@ def test_seed_reads_nested_project_tasks_and_project_reference(tmp_path: Path, t
         capture_output=True,
     )
 
-    seed(tmp_db, tasks_root=tasks_root, projects_root=projects_root)
+    seed(tmp_db, project="android_demo", tasks_root=tasks_root, projects_root=projects_root)
 
     tracker = Tracker(tmp_db)
     rows = list(tracker.list_tasks())
     assert len(rows) == 1
+    assert rows[0].task_number == 1
     assert rows[0].title == "Fix startup crash"
-    assert rows[0].project == "android_demo"
-    assert rows[0].spec_path == "tasks/android_demo/001_fix_crash.md"
+    assert rows[0].spec_path == "tasks/android_demo/1-fix-crash.md"
 
 
 def test_seed_accepts_project_directory_without_git_repo(tmp_path: Path, tmp_db: Path) -> None:
@@ -78,14 +78,14 @@ def test_seed_accepts_project_directory_without_git_repo(tmp_path: Path, tmp_db:
     project_tasks.mkdir(parents=True)
     project_dir.mkdir(parents=True)
     (project_dir / "pyproject.toml").write_text("[project]\nname='plain-python'\n", encoding="utf-8")
-    (project_tasks / "001_fix_bug.md").write_text(
+    (project_tasks / "1-fix-bug.md").write_text(
         "Project: plain_python\n\n# Fix plain project bug\n",
         encoding="utf-8",
     )
 
-    seed(tmp_db, tasks_root=tasks_root, projects_root=projects_root)
+    seed(tmp_db, project="plain_python", tasks_root=tasks_root, projects_root=projects_root)
 
     rows = list(Tracker(tmp_db).list_tasks())
     assert len(rows) == 1
-    assert rows[0].project == "plain_python"
-    assert rows[0].spec_path == "tasks/plain_python/001_fix_bug.md"
+    assert rows[0].task_number == 1
+    assert rows[0].spec_path == "tasks/plain_python/1-fix-bug.md"

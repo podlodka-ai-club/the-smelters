@@ -12,8 +12,8 @@ from src.models import Status, Task
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
   id           INTEGER PRIMARY KEY,
+  task_number  INTEGER NOT NULL UNIQUE,
   title        TEXT NOT NULL,
-  project      TEXT NOT NULL,
   spec_path    TEXT NOT NULL,
   status       TEXT NOT NULL,
   attempts     INTEGER NOT NULL DEFAULT 0,
@@ -38,8 +38,8 @@ def _now() -> str:
 def _row_to_task(row: sqlite3.Row) -> Task:
     return Task(
         id=row["id"],
+        task_number=row["task_number"],
         title=row["title"],
-        project=row["project"],
         spec_path=row["spec_path"],
         status=row["status"],
         attempts=row["attempts"],
@@ -67,22 +67,14 @@ class Tracker:
     def init_schema(self) -> None:
         with self._conn() as conn:
             conn.executescript(SCHEMA)
-            columns = {
-                row["name"]
-                for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
-            }
-            if "project" not in columns:
-                conn.execute(
-                    "ALTER TABLE tasks ADD COLUMN project TEXT NOT NULL DEFAULT ''"
-                )
 
-    def insert_task(self, *, title: str, project: str, spec_path: str) -> int:
+    def insert_task(self, *, task_number: int, title: str, spec_path: str) -> int:
         now = _now()
         with self._conn() as conn:
             cursor = conn.execute(
-                "INSERT INTO tasks (title, project, spec_path, status, created_at, updated_at) "
+                "INSERT INTO tasks (task_number, title, spec_path, status, created_at, updated_at) "
                 "VALUES (?, ?, ?, 'ready', ?, ?)",
-                (title, project, spec_path, now, now),
+                (task_number, title, spec_path, now, now),
             )
             return int(cursor.lastrowid)
 
@@ -95,18 +87,30 @@ class Tracker:
 
     def list_tasks(self) -> Iterator[Task]:
         with self._conn() as conn:
-            rows = conn.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+            rows = conn.execute("SELECT * FROM tasks ORDER BY task_number").fetchall()
 
         for row in rows:
             yield _row_to_task(row)
 
-    def claim_next_ready_task(self) -> Task | None:
+    def claim_next_ready_task(
+        self,
+        *,
+        project: str | None = None,
+        task_id: int | None = None,
+    ) -> Task | None:
         now = _now()
         with self._conn() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT * FROM tasks WHERE status='ready' ORDER BY id LIMIT 1"
-            ).fetchone()
+            query = "SELECT * FROM tasks WHERE status='ready'"
+            params: list[object] = []
+            if project is not None:
+                query += " AND spec_path LIKE ?"
+                params.append(f"tasks/{project}/%")
+            if task_id is not None:
+                query += " AND task_number=?"
+                params.append(task_id)
+            query += " ORDER BY task_number LIMIT 1"
+            row = conn.execute(query, tuple(params)).fetchone()
             if row is None:
                 conn.execute("COMMIT")
                 return None

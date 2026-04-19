@@ -12,9 +12,9 @@ from src.models import Task
 def _task(task_id: int = 1, worktree: str = ".") -> Task:
     return Task(
         id=task_id,
+        task_number=task_id,
         title=f"task {task_id}",
-        project="python_fixture",
-        spec_path=f"tasks/{task_id}.md",
+        spec_path=f"tasks/python_fixture/{task_id}.md",
         status="running",
         attempts=0,
         worktree=worktree,

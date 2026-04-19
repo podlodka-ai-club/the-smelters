@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 import json
 import os
 from pathlib import Path
@@ -94,6 +95,15 @@ def _extract_text(message: object) -> str:
     return ""
 
 
+async def _streaming_prompt(prompt: str) -> AsyncIterator[dict[str, object]]:
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": prompt},
+        "parent_tool_use_id": None,
+        "session_id": "default",
+    }
+
+
 async def amain(task_id: int) -> int:
     options = ClaudeAgentOptions(
         system_prompt=CODER_SYSTEM_PROMPT,
@@ -104,7 +114,7 @@ async def amain(task_id: int) -> int:
         cwd=Path.cwd(),
     )
     last_text = ""
-    async for message in query(prompt=_build_user_prompt(task_id), options=options):
+    async for message in query(prompt=_streaming_prompt(_build_user_prompt(task_id)), options=options):
         extracted = _extract_text(message)
         if extracted:
             last_text = extracted

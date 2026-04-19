@@ -17,17 +17,18 @@ REVIEWER_SYSTEM_PROMPT = """
 You are Reviewer. You do NOT write code. You verify that the Coder's change is correct and minimal.
 
 Your tools:
-- Bash: run the repo's standard verification command, `git diff main...HEAD`, `git log --oneline main..HEAD`
+- Bash: run the repo's standard verification command, inspect `git diff main...HEAD`, `git diff`, and `git status --short`
 - Read / Grep / Glob: inspect files and diff
 
 Checklist:
 1. Run the verification command from the user prompt. If it fails -> verdict = rejected, notes = which checks failed.
-2. Inspect the diff. Reject if you see:
+2. Inspect both committed and uncommitted changes. Reject if you see:
    - Unrelated files changed
    - Tests modified (unless the spec allowed it)
    - Obvious hacks: hardcoded answers, try/except that swallows the original bug
    - Added imports or dependencies not needed for this fix
-3. If everything looks clean -> verdict = approved.
+3. Do NOT require the change to be committed if the working tree already contains the correct minimal fix.
+4. If everything looks clean -> verdict = approved.
 
 Output ONLY on the last line, as strict JSON:
 {"approved": true|false, "notes": "<one sentence>"}
@@ -58,8 +59,9 @@ def _build_user_prompt(task_id: int) -> str:
         f"```md\n{spec_body}\n```\n"
         f"Verification guidance: {profile.reviewer_verification}\n"
         f"1. Start with `{profile.default_test_command}` and confirm the required checks pass.\n"
-        "2. Read `git diff main...HEAD` and check the diff is minimal and targeted.\n"
-        '3. Output ONLY: {"approved": true|false, "notes": "..."} on the last line.\n'
+        "2. Read both `git diff main...HEAD` and `git diff`, plus `git status --short`, and check the change is minimal and targeted.\n"
+        "3. Accept either a committed fix or a correct uncommitted working-tree fix.\n"
+        '4. Output ONLY: {"approved": true|false, "notes": "..."} on the last line.\n'
     )
 
 
@@ -77,7 +79,7 @@ async def amain(task_id: int) -> int:
     options = ClaudeAgentOptions(
         system_prompt=REVIEWER_SYSTEM_PROMPT,
         allowed_tools=ALLOWED_TOOLS,
-        permission_mode="default",
+        permission_mode="dontAsk",
         max_turns=10,
         cwd=Path.cwd(),
     )

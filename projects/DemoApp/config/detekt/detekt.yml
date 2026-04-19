@@ -1,0 +1,33 @@
+naming:
+  # Composable functions start with an uppercase letter by convention in Jetpack Compose.
+  FunctionNaming:
+    ignoreAnnotated:
+      - 'androidx.compose.runtime.Composable'
+
+style:
+  # Configuration for MagicNumber to allow common constants and small integers.
+  MagicNumber:
+    # Allows defining constants with hex values (like Colors) or other logic-related numbers.
+    ignorePropertyDeclaration: true
+    ignoreAnnotation: true
+    ignoreEnums: true
+    ignoreNumbers:
+      - '0'
+      - '1'
+
+complexity:
+  # Compose UI logic and nested trees can naturally exceed the default method length.
+  LongMethod:
+    threshold: 100
+
+exceptions:
+  # GifRepositoryImpl uses safeApiCall to wrap network requests and catch all generic exceptions
+  # for consistent error handling (returning Result.failure instead of crashing).
+  TooGenericExceptionCaught:
+    excludes:
+      - '**/GifRepositoryImpl.kt'
+
+formatting:
+  # Modern Android standard for line length is generally 120 characters.
+  MaximumLineLength:
+    maxLineLength: 120

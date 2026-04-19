@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 
 from src.worktree import create_worktree, diff_vs_main, remove_worktree
@@ -61,3 +62,34 @@ def test_remove_worktree_cleans_up(tmp_target_repo: Path, tmp_path: Path) -> Non
     worktree_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=tmp_path / "wt")
     remove_worktree(tmp_target_repo, worktree_path, branch="task-1")
     assert not worktree_path.exists()
+
+
+def test_create_worktree_prunes_stale_git_metadata(tmp_target_repo: Path, tmp_path: Path) -> None:
+    _write_commit(tmp_target_repo, "a.txt", "hello\n", "add a.txt")
+    worktrees_root = tmp_path / "wt"
+    stale_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=worktrees_root)
+
+    shutil.rmtree(stale_path)
+
+    recreated_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=worktrees_root)
+
+    assert recreated_path == stale_path
+    assert recreated_path.exists()
+    assert (recreated_path / "a.txt").read_text() == "hello\n"
+
+
+def test_create_worktree_reclaims_existing_task_branch_from_old_path(
+    tmp_target_repo: Path,
+    tmp_path: Path,
+) -> None:
+    _write_commit(tmp_target_repo, "a.txt", "hello\n", "add a.txt")
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+
+    old_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=old_root)
+    new_path = create_worktree(tmp_target_repo, task_id=1, worktrees_root=new_root)
+
+    assert old_path != new_path
+    assert not old_path.exists()
+    assert new_path.exists()
+    assert (new_path / "a.txt").read_text() == "hello\n"

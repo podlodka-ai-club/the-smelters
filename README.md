@@ -12,6 +12,8 @@ The Python fixture is not part of the orchestrator runtime itself. It is a contr
 
 After cloning this repository, `projects/python_fixture/` is just a normal folder. If you want to run the sample project through `seed.py` and `orchestrator.py`, initialize it locally as its own git repo on branch `main` first.
 
+Repeated runs are supported. If an earlier dry-run left behind missing worktree registrations, the orchestrator auto-prunes stale git worktree metadata before recreating `task-N` worktrees.
+
 ## Pipeline
 
 ```text
@@ -28,7 +30,7 @@ tasks/*.md
 ```
 
 1. `seed.py` reads `tasks/*.md`, extracts `Project: ...`, validates `projects/<name>` is a git repo on `main`, and inserts tasks into `tasks.db`.
-2. `orchestrator.py` claims the next ready task, resolves its target repo from `task.project`, and creates an isolated git worktree.
+2. `orchestrator.py` claims the next ready task, resolves its target repo from `task.project`, prunes stale worktree metadata, and creates an isolated git worktree.
 3. `agents/coder.py` works inside that worktree and applies the requested fix.
 4. `agents/reviewer.py` verifies the change and approves or rejects it.
 5. `src/tracker.py` persists state transitions, while `src/events.py` writes the event log consumed by `printer.py` and `tui.py`.

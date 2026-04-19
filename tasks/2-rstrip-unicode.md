@@ -1,6 +1,6 @@
 Project: python_fixture
 
-# Strip trailing Unicode whitespace in strings.clean
+# Task 2: Strip trailing Unicode whitespace in strings.clean
 
 ## Failing test
 tests/test_strings.py::test_clean_nbsp

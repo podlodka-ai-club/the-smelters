@@ -1,6 +1,6 @@
 Project: python_fixture
 
-# sorting.by_priority must be stable w.r.t. insertion order
+# Task 4: sorting.by_priority must be stable w.r.t. insertion order
 
 ## Failing test
 tests/test_sorting.py::test_sort_stability_equal_priority_keeps_insert_order

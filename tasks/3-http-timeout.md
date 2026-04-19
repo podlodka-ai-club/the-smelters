@@ -1,6 +1,6 @@
 Project: python_fixture
 
-# http_client.get must forward its timeout argument
+# Task 3: http_client.get must forward its timeout argument
 
 ## Failing test
 tests/test_http_client.py::test_get_forwards_timeout_to_urlopen

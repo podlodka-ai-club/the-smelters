@@ -1,13 +1,15 @@
-# Task 4: Advanced Filtering & Sorting
+Project: DemoApp
 
-**Priority**: 🔴 HIGH
-**Estimated Duration**: 1-2 days
-**Complexity**: Low-Medium
-**User Impact**: ⭐⭐⭐
+# Task 9: Advanced Filtering & Sorting
 
----
+## Summary
 
-## Product Description
+- Priority: High
+- Estimated Duration: 1-2 days
+- Complexity: Low-Medium
+- User Impact: Medium
+
+## Context
 
 Add content filters, language preferences, and content type options to search results. This feature enables:
 - **Content Control**: Filter by age-appropriate ratings (G, PG, PG-13, R)
@@ -28,14 +30,14 @@ Add content filters, language preferences, and content type options to search re
 
 ---
 
-## Tech Stack
+## Technical Notes
 
-### Dependencies to Add
+### Dependencies
 
 **DataStore Preferences** for lightweight persistent preferences:
 - `androidx.datastore:datastore-preferences` (1.0.0+)
 
-### Architecture Overview
+### Architecture
 
 Following the modular Clean Architecture pattern:
 
@@ -362,4 +364,3 @@ Auto-persist on save, auto-load on app start.
 - 🔔 **Filter Presets**: Save custom filter combinations
 - ⭐ **Trending Filters**: Show trending content filters
 - 🎯 **Saved Searches**: Save queries with associated filters
-

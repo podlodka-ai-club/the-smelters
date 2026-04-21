@@ -24,7 +24,7 @@ Linear project URL https://linear.app/aihackersprint/team/AIH/active
 
 The whoole project git repo: https://github.com/podlodka-ai-club/the-smelters
 
-The demo project on which the orchestrator will work on to implement tasks: https://github.com/podlodka-ai-club/the-smelters/DemoProject
+The demo project on which the orchestrator will work on to implement tasks lies in projects/DemoApp. Currently it is working only on projects/python_fixture
 
 Use "gh" CLI for accessing git
 

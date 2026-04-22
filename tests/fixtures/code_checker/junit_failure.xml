@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.aj.giphysearch.SearchViewModelTest" tests="3" skipped="0" failures="2" errors="0" timestamp="2026-04-21T18:30:00" hostname="builder" time="0.421">
+  <properties/>
+  <testcase name="shouldEmitLoadingThenSuccess" classname="com.aj.giphysearch.SearchViewModelTest" time="0.120"/>
+  <testcase name="shouldEmitError" classname="com.aj.giphysearch.SearchViewModelTest" time="0.145">
+    <failure message="expected:&lt;Loading&gt; but was:&lt;Error(java.io.IOException)&gt;" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: expected:&lt;Loading&gt; but was:&lt;Error(java.io.IOException)&gt;
+	at com.aj.giphysearch.SearchViewModelTest.shouldEmitError(SearchViewModelTest.kt:47)</failure>
+  </testcase>
+  <testcase name="shouldDebounceRapidQueries" classname="com.aj.giphysearch.SearchViewModelTest" time="0.156">
+    <failure message="Expected 1 emission(s), got 3" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: Expected 1 emission(s), got 3
+	at com.aj.giphysearch.SearchViewModelTest.shouldDebounceRapidQueries(SearchViewModelTest.kt:82)</failure>
+  </testcase>
+  <system-out/>
+  <system-err/>
+</testsuite>

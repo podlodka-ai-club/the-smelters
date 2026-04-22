@@ -24,4 +24,4 @@ jobs:
         run: uv pip install --system -e .
 
       - name: Run tests
-        run: .venv/bin/python -m pytest tests/ -v
+        run: python -m pytest tests/ -v

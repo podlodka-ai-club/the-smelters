@@ -201,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=Path.cwd(), type=Path)
     parser.add_argument("--task", type=int, default=None)
     parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--coder-role", default="coder")
+    parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     args = parser.parse_args(argv)
 
@@ -219,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
         projects_root=root / "projects",
         tasks_root=root / "tasks",
         worktrees_root=runtime.worktrees_path,
+        coder_role=args.coder_role,
+        reviewer_role=args.reviewer_role,
         task_filter=args.task,
         max_attempts=args.max_attempts,
     )

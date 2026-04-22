@@ -6,6 +6,7 @@ from collections.abc import AsyncIterable
 import pytest
 import sys
 import anthropic
+import yaml
 
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny
 from agents import android_coder
@@ -19,11 +20,11 @@ def mock_env(monkeypatch, tmp_path):
 
 def test_get_config(mock_env, monkeypatch):
     # Test fallback
-    assert android_coder.get_config() == {"implementation": "claude"}
+    assert android_coder.get_config() == {"implementation": "gemini", "agent_timeout": 7200}
     
     # Test reading config
-    config_data = {"implementation": "gemini", "gemini_api_key": "test_key"}
-    (mock_env / "agent_config.json").write_text(json.dumps(config_data))
+    config_data = {"implementation": "gemini", "gemini_api_key": "test_key", "agent_timeout": 3600}
+    (mock_env / "agent_config.yml").write_text(yaml.dump(config_data))
     assert android_coder.get_config() == config_data
 
 @pytest.mark.asyncio
@@ -217,10 +218,11 @@ async def test_amain_claude_exception(monkeypatch, mock_env, capsys):
 @pytest.mark.asyncio
 async def test_amain_gemini(monkeypatch, mock_env, capsys):
     monkeypatch.setattr(android_coder, "generate_prompt_for_task", lambda task_id: f"task:{task_id}")
-    monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini", "gemini_api_key": "test"})
+    monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini", "gemini_api_key": "test", "agent_timeout": 7200})
 
     class MockProcess:
         returncode = 0
+        pid = 12345
         async def communicate(self):
             return b'{"ok": true, "summary": "done"}\n', b''
             
@@ -236,10 +238,11 @@ async def test_amain_gemini(monkeypatch, mock_env, capsys):
 @pytest.mark.asyncio
 async def test_amain_gemini_no_json(monkeypatch, mock_env, capsys):
     monkeypatch.setattr(android_coder, "generate_prompt_for_task", lambda task_id: f"task:{task_id}")
-    monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini"})
+    monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini", "agent_timeout": 7200})
 
     class MockProcess:
         returncode = 0
+        pid = 12345
         async def communicate(self):
             return b'just text\n', b''
             

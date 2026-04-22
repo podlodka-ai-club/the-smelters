@@ -45,14 +45,17 @@ BASH_DENY = [
 ]
 
 
-def get_config() -> dict[str, str]:
-    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.json"
+import yaml
+
+
+def get_config() -> dict[str, Any]:
+    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
     if not config_path.exists():
-        config_path = Path("agent_config.json")
+        config_path = Path("agent_config.yml")
     if config_path.exists():
         with open(config_path) as f:
-            return json.load(f)
-    return {"implementation": "claude"}
+            return yaml.safe_load(f)
+    return {"implementation": "gemini", "agent_timeout": 7200}
 
 
 async def validate_tool_usage(
@@ -167,6 +170,7 @@ async def run_android_coder_agent(task_id: int) -> int:
 
     config = get_config()
     implementation = config.get("implementation", "claude").lower()
+    agent_timeout = config.get("agent_timeout", 7200)  # default 2 hours
 
     if implementation == "gemini":
         gemini_api_key = config.get("gemini_api_key", "")
@@ -179,20 +183,41 @@ async def run_android_coder_agent(task_id: int) -> int:
         cmd = [
             "opencode", "run",
             "--model", gemini_model,
-            "--prompt", full_prompt
+            "--attach", "http://localhost:4096",
+            full_prompt
         ]
         
+        print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
+        
         try:
-            emit_event(events_path, task_id=task_id, actor="android_coder", type="compiling") # just an indicative event
+            emit_event(events_path, task_id=task_id, actor="android_coder", type="compiling")
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=Path.cwd()
             )
             
-            stdout_bytes, stderr_bytes = await process.communicate()
+            print(f"INFO: Process started with PID: {process.pid}", file=sys.stderr)
+            
+            # Read output with configurable timeout
+            try:
+                stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=agent_timeout)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                error_msg = f"Agent timed out after {agent_timeout} seconds"
+                print(f"ERROR: {error_msg}", file=sys.stderr)
+                emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error=error_msg)
+                print(json.dumps({"ok": False, "error": error_msg}))
+                return 1
+            
             stdout = stdout_bytes.decode("utf-8", errors="replace")
+            
+            # Debug: print stderr if there's an issue
+            if process.returncode != 0:
+                print(f"ERROR: opencode exit code: {process.returncode}", file=sys.stderr)
+                print(f"ERROR stdout (last 1000 chars): {stdout[-1000:]}", file=sys.stderr)
             
             lines = [line for line in stdout.splitlines() if line.strip()]
             if lines:
@@ -221,6 +246,8 @@ async def run_android_coder_agent(task_id: int) -> int:
     anthropic_api_key = config.get("anthropic_api_key", "")
     if anthropic_api_key:
         os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+    elif "ANTHROPIC_API_KEY" in os.environ:
+        del os.environ["ANTHROPIC_API_KEY"]
 
     options = ClaudeAgentOptions(
         system_prompt=ANDROID_CODER_SYSTEM_PROMPT,

@@ -1,8 +1,5 @@
 package com.aj.giphysearch.domain.gifs.model
 
-import androidx.compose.runtime.Immutable
-
-@Immutable
 data class Gif(
     val id: String,
     val title: String,

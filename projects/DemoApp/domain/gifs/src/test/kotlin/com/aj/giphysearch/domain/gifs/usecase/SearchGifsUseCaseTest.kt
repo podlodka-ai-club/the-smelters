@@ -1,5 +1,6 @@
 package com.aj.giphysearch.domain.gifs.usecase
 
+import com.aj.giphysearch.domain.gifs.error.GifLoadResult
 import com.aj.giphysearch.domain.gifs.model.Gif
 import com.aj.giphysearch.domain.gifs.repository.GifRepository
 import kotlinx.coroutines.test.runTest
@@ -10,14 +11,20 @@ import org.junit.Test
 class SearchGifsUseCaseTest {
 
     private val repository = object : GifRepository {
-        override suspend fun searchGifs(query: String, limit: Int, offset: Int): Result<List<Gif>> {
-            return Result.success(listOf(fakeGif("1")))
+        override suspend fun searchGifs(
+            query: String,
+            limit: Int,
+            offset: Int
+        ): GifLoadResult<List<Gif>> {
+            return GifLoadResult.Success(listOf(fakeGif("1")))
         }
-        override suspend fun getTrendingGifs(limit: Int, offset: Int): Result<List<Gif>> {
-            return Result.success(listOf(fakeGif("trending")))
+
+        override suspend fun getTrendingGifs(limit: Int, offset: Int): GifLoadResult<List<Gif>> {
+            return GifLoadResult.Success(listOf(fakeGif("trending")))
         }
-        override suspend fun getGifById(id: String): Result<Gif> {
-            return Result.success(fakeGif(id))
+
+        override suspend fun getGifById(id: String): GifLoadResult<Gif> {
+            return GifLoadResult.Success(fakeGif(id))
         }
     }
 
@@ -26,15 +33,15 @@ class SearchGifsUseCaseTest {
     @Test
     fun `when query is too short, return empty list`() = runTest {
         val result = useCase("a", 25, 0)
-        assertTrue(result.isSuccess)
-        assertEquals(0, result.getOrNull()?.size)
+        assertTrue(result is GifLoadResult.Success)
+        assertEquals(0, (result as GifLoadResult.Success).data.size)
     }
 
     @Test
     fun `when query is long enough, call repository`() = runTest {
         val result = useCase("abc", 25, 0)
-        assertTrue(result.isSuccess)
-        assertEquals(1, result.getOrNull()?.size)
+        assertTrue(result is GifLoadResult.Success)
+        assertEquals(1, (result as GifLoadResult.Success).data.size)
     }
 
     private fun fakeGif(id: String) = Gif(

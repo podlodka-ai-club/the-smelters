@@ -3,13 +3,4 @@
     <string name="app_name">GiphySearch</string>
     <string name="search">Search</string>
     <string name="trending">Trending</string>
-    <string name="search_hint">Search GIFs…</string>
-    <string name="search_prompt">Type at least 2 characters to search</string>
-    <string name="no_results">No GIFs found</string>
-    <string name="error_loading">Failed to load GIFs</string>
-    <string name="retry">Retry</string>
-    <string name="clear">Clear</string>
-    <string name="back">Back</string>
-    <string name="rating">Rating: %s</string>
-    <string name="by_user">By %s</string>
 </resources>

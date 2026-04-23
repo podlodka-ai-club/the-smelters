@@ -9,17 +9,13 @@ plugins {
 
 android {
     namespace = "com.aj.giphysearch"
-    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.aj.giphysearch"
-        minSdk = 24
-        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "com.aj.giphysearch.GiphyTestRunner"
-
         val properties = Properties()
         val localPropertiesFile = project.rootProject.file("local.properties")
         if (localPropertiesFile.exists()) {
@@ -39,15 +35,6 @@ android {
         }
     }
 
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -59,6 +46,8 @@ dependencies {
     implementation(project(":data:gifs"))
     implementation(project(":core:ui"))
     implementation(project(":core:network"))
+    implementation(project(":core:navigation"))
+    implementation(project(":feature:gif-ui"))
     implementation(project(":feature:search"))
     implementation(project(":feature:trending"))
     implementation(project(":feature:details"))
@@ -74,12 +63,14 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
 
     implementation(libs.koin.android)
     implementation(libs.koin.androidx.compose)
+    implementation(libs.timber)
 
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
@@ -93,18 +84,24 @@ dependencies {
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.profileinstaller)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
     testImplementation(libs.androidx.paging.testing)
+    testImplementation(project(":testing:gifs"))
 
     androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.ui.test.junit4)
     androidTestImplementation(libs.material)
     androidTestImplementation(libs.kaspresso)
     androidTestImplementation(libs.kaspresso.compose.support)
+    androidTestImplementation(libs.koin.test)
+    androidTestImplementation(libs.koin.test.junit4)
+    androidTestImplementation(project(":testing:gifs"))
+    androidTestImplementation(project(":testing:compose-support"))
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }

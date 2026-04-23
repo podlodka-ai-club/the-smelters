@@ -4,9 +4,9 @@ import com.aj.giphysearch.BuildConfig
 import com.aj.giphysearch.core.network.di.networkModule
 import com.aj.giphysearch.data.gifs.di.gifsDataModule
 import com.aj.giphysearch.domain.gifs.di.gifsDomainModule
-import com.aj.giphysearch.feature.details.DetailViewModel
-import com.aj.giphysearch.feature.search.SearchViewModel
-import com.aj.giphysearch.feature.trending.TrendingViewModel
+import com.aj.giphysearch.feature.details.ui.DetailViewModel
+import com.aj.giphysearch.feature.search.ui.SearchViewModel
+import com.aj.giphysearch.feature.trending.ui.TrendingViewModel
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.module.dsl.viewModelOf
 import org.koin.dsl.module

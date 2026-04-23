@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_gifs_placeholder">Search GIFs…</string>
+    <string name="search_clear_content_description">Clear</string>
+    <string name="search_min_query_prompt">Type at least 2 characters to search</string>
+    <string name="search_failed_to_load_gifs">Failed to load GIFs</string>
+    <string name="search_retry">Retry</string>
+    <string name="search_no_gifs_found">No GIFs found</string>
+</resources>

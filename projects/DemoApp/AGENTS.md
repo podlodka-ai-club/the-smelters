@@ -9,11 +9,11 @@ This document provides a comprehensive overview of the GiphySearch app architect
 Before working with this project, ensure the following are installed and configured:
 
 #### Required Tools
-- **JDK 17**: Required for compilation (project uses `jvmTarget = "17"` and `sourceCompatibility = JavaVersion.VERSION_17`)
+- **JDK 17**: Required for compilation (project centralizes JVM and Java compatibility in root Gradle config)
 - **Android SDK**:
-  - Compile SDK: API 35
+  - Compile SDK: API 36
   - Min SDK: API 24
-  - Target SDK: API 35
+  - Target SDK: API 36
 - **Android Command Line Tools**: For building APKs and managing SDK components
 - **Gradle Wrapper**: Included in the project (`./gradlew`) - no separate installation needed
 
@@ -50,12 +50,13 @@ The project follows **Clean Architecture** principles combined with **MVVM** (Mo
 
 #### Layers
 1.  **Data Layer** (`com.aj.giphysearch.data`):
-    - `remote`: Ktor API implementation (`GiphyApi`).
+    - `remote`: Ktorfit API interfaces (`GiphyApi`) backed by Ktor `HttpClient`.
     - `dto`: Data Transfer Objects for API responses.
     - `mapper`: Functions to convert DTOs to Domain Models.
     - `repository`: Implementation of domain repository interfaces.
     - `paging`: Paging 3 `PagingSource` implementations.
 2.  **Domain Layer** (`com.aj.giphysearch.domain`):
+    - `:domain:gifs` is a **pure Kotlin/JVM** library (no Android or Compose runtime). Compose treats `Gif` as stable via [`config/compose-gif-stability.conf`](config/compose-gif-stability.conf), wired once from the root [`build.gradle.kts`](build.gradle.kts) for every subproject that applies the Kotlin Compose plugin.
     - `model`: Pure Kotlin data classes (UI-independent).
     - `repository`: Interface definitions for data access.
     - `usecase`: Single-responsibility business logic classes.
@@ -71,7 +72,7 @@ The project follows **Clean Architecture** principles combined with **MVVM** (Mo
 - **UI Framework**: Jetpack Compose
 - **Asynchronous Programming**: Coroutines & Flow
 - **Dependency Injection**: Koin (`viewModelOf`, `factory`, `single`)
-- **Networking**: Ktor Client (CIO engine) with Content Negotiation (JSON)
+- **Networking**: Ktor Client (OkHttp engine) + Ktorfit interface generation (KSP)
 - **Serialization**: Kotlinx Serialization
 - **Image Loading**: Coil 3 (with GIF and OkHttp support)
 - **Navigation**: Jetpack Compose Navigation
@@ -85,6 +86,13 @@ The project follows **Clean Architecture** principles combined with **MVVM** (Mo
 - Prefer `val` over `var`.
 - Use **Trailing Lambda** syntax.
 - Ensure all business logic resides in `UseCase`.
+
+#### Kotlin Declaration Placement
+- Keep closely related declarations together when it improves readability (for example, route objects in one routes file or a small `UiState` class next to its `ViewModel`).
+- Split files when declarations represent different responsibilities, especially for dense files with many top-level types.
+- Prefer class-local constants inside a `private companion object` when those constants are only used by that class.
+- Use top-level constants only for file-level behavior shared by top-level functions/composables in the same file.
+- Keep refactors behavior-preserving: move declarations without changing APIs or business logic unless explicitly requested.
 
 #### ViewModels
 - Expose state via `StateFlow` (e.g., `_state` as `MutableStateFlow`, `state` as `StateFlow`).
@@ -100,6 +108,8 @@ The project follows **Clean Architecture** principles combined with **MVVM** (Mo
 #### Data Handling
 - **Mappers**: Always map DTOs to Domain Models in the Data layer before passing them to the Domain layer.
 - **Result Pattern**: Consider using a `Result` or `Resource` wrapper for API calls to handle Success/Error states gracefully.
+- **API Definitions**: Define endpoints in Ktorfit interfaces using annotations (`@GET`, `@Query`, `@Path`) and create implementations through DI.
+- **Ktorfit Versions**: Keep Ktorfit/KSP versions compatible with the project's Kotlin version before upgrading.
 
 ### 🚀 Navigation
 - Defined in `com.aj.giphysearch.navigation.AppNavHost`.

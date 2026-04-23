@@ -21,10 +21,11 @@ This project requires a Giphy API Key to run. For security reasons, the API key 
 * Koin for Dependency Injection
 * Paging 3 for pagination
 * Coil 3 for GIF loading
-* Ktor Client for networking
+* Ktorfit for networking
 
 ## Rate Limiting
 
-The application includes a client-side rate limiter configured to allow a maximum of 100 requests per hour,
-because non-prod giphy key allows only that much requests. If the limit is exceeded, the app will log the event and
-display a Toast warning the user to wait before making further requests.
+The application enforces a client-side rate limiter that allows a maximum of 100 requests per hour,
+matching the non-production Giphy API key constraints. If the limit is exceeded, the app maps the
+failure to a domain rate-limit error and displays a Toast warning the user to wait before making
+further requests.

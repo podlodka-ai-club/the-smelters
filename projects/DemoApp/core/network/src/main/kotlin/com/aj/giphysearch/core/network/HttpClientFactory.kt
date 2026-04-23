@@ -2,15 +2,16 @@ package com.aj.giphysearch.core.network
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.plugins.logging.LogLevel
 import io.ktor.client.plugins.logging.Logger
 import io.ktor.client.plugins.logging.Logging
-import io.ktor.http.takeFrom
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import okhttp3.Dispatcher
+import timber.log.Timber
 
 object HttpClientFactory {
     private const val TIMEOUT_MILLIS = 3000L
@@ -21,18 +22,30 @@ object HttpClientFactory {
         engine {
             config {
                 connectTimeout(TIMEOUT_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS)
-                dispatcher(Dispatcher().apply {
-                    maxRequests = MAX_REQUESTS
-                    maxRequestsPerHost = MAX_REQUESTS_PER_HOST
-                })
+                addInterceptor(RateLimitInterceptor())
+                dispatcher(
+                    Dispatcher().apply {
+                        maxRequests = MAX_REQUESTS
+                        maxRequestsPerHost = MAX_REQUESTS_PER_HOST
+                    }
+                )
             }
         }
         defaultRequest {
             url {
-                takeFrom("https://api.giphy.com/v1/")
                 parameters.append("api_key", apiKey)
             }
         }
+        install(
+            createClientPlugin("ApiKeyPlugin") {
+                onRequest { request, _ ->
+                    // Ensure api_key is present after all URL transformations (including Ktorfit-generated URLs).
+                    if (request.url.parameters["api_key"].isNullOrBlank()) {
+                        request.url.parameters.append("api_key", apiKey)
+                    }
+                }
+            }
+        )
         install(ContentNegotiation) {
             json(
                 Json {
@@ -45,7 +58,7 @@ object HttpClientFactory {
             install(Logging) {
                 logger = object : Logger {
                     override fun log(message: String) {
-                        println("Ktor: $message")
+                        Timber.tag("Ktor").d(message)
                     }
                 }
                 level = LogLevel.ALL

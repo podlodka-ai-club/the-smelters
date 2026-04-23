@@ -28,6 +28,8 @@ exceptions:
       - '**/GifRepositoryImpl.kt'
 
 formatting:
+  active: true
+  android: true
   # Modern Android standard for line length is generally 120 characters.
   MaximumLineLength:
     maxLineLength: 120

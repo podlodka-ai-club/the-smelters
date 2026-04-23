@@ -7,5 +7,5 @@
   upgrading, hence the explicit declaration.
 -->
 <resources>
-    <attr name="drawerLayoutStyle" format="reference"/>
+    <attr name="drawerLayoutStyle" format="reference" />
 </resources>

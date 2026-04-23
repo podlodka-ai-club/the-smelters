@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="detail_back_content_description">Back</string>
+    <string name="detail_failed_to_load_gif">Failed to load GIF</string>
+    <string name="detail_retry">Retry</string>
+    <string name="detail_rating_label">Rating: %1$s</string>
+    <string name="detail_by_username">By %1$s</string>
+</resources>

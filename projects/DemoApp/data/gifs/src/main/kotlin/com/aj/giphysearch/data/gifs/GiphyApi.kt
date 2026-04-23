@@ -1,25 +1,24 @@
 package com.aj.giphysearch.data.gifs
 
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.request.get
-import io.ktor.client.request.parameter
+import de.jensklingenberg.ktorfit.http.GET
+import de.jensklingenberg.ktorfit.http.Path
+import de.jensklingenberg.ktorfit.http.Query
 
-internal class GiphyApi(private val httpClient: HttpClient) {
+internal interface GiphyApi {
 
-    suspend fun searchGifs(query: String, limit: Int, offset: Int): GiphyListResponseDto =
-        httpClient.get("gifs/search") {
-            parameter("q", query)
-            parameter("limit", limit)
-            parameter("offset", offset)
-        }.body()
+    @GET("gifs/search")
+    suspend fun searchGifs(
+        @Query("q") query: String,
+        @Query("limit") limit: Int,
+        @Query("offset") offset: Int,
+    ): GiphyListResponseDto
 
-    suspend fun getTrendingGifs(limit: Int, offset: Int): GiphyListResponseDto =
-        httpClient.get("gifs/trending") {
-            parameter("limit", limit)
-            parameter("offset", offset)
-        }.body()
+    @GET("gifs/trending")
+    suspend fun getTrendingGifs(
+        @Query("limit") limit: Int,
+        @Query("offset") offset: Int,
+    ): GiphyListResponseDto
 
-    suspend fun getGifById(id: String): GiphySingleResponseDto =
-        httpClient.get("gifs/$id").body()
+    @GET("gifs/{id}")
+    suspend fun getGifById(@Path("id") id: String): GiphySingleResponseDto
 }

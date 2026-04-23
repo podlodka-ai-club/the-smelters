@@ -88,6 +88,7 @@ class Orchestrator:
         os.environ["TRACKER_DB"] = str(self.tracker.db_path)
         os.environ["TASKS_ROOT"] = str(self.tasks_root)
         os.environ["REPO_ROOT"] = str(self.root_path)
+        os.environ["EVENTS_PATH"] = str(self.events_path)
 
         if task.worktree is None:
             project_repo = self._project_repo()

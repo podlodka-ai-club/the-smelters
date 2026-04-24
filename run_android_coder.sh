@@ -30,7 +30,7 @@ echo "  Android Coder - Task Selector"
 echo "============================================"
 echo ""
 
-# Get task list
+# Get task list (using task_number for display)
 TASKS=$($PYTHON -c "
 import sqlite3
 conn = sqlite3.connect('$DB_PATH')
@@ -50,30 +50,30 @@ fi
 echo "Available tasks:"
 echo ""
 while IFS='|' read -r id task_num title status; do
-    echo "  [$id] Task #$task_num: $title (status: $status)"
+    echo "  [#$task_num] $title (status: $status)"
 done <<< "$TASKS"
 echo ""
 echo "============================================"
 
 # Prompt for task selection
-read -p "Enter task ID to run (or 'q' to quit): " SELECTION
+read -p "Enter task number to run (e.g., 6, 7, 8) or 'q' to quit: " SELECTION
 
 if [ "$SELECTION" = "q" ] || [ -z "$SELECTION" ]; then
     echo "Cancelled."
     exit 0
 fi
 
-# Validate selection
-if ! echo "$TASKS" | grep -q "^${SELECTION}|"; then
-    echo "Error: Invalid task ID: $SELECTION"
+# Validate selection - match by task_number
+if ! echo "$TASKS" | grep -q "|[0-9]*|$SELECTION|"; then
+    echo "Error: Invalid task number: $SELECTION"
     exit 1
 fi
 
-# Get task details
+# Get task ID from task_number
 TASK_INFO=$($PYTHON -c "
 import sqlite3
 conn = sqlite3.connect('$DB_PATH')
-row = conn.execute('SELECT id, task_number, title, spec_path FROM tasks WHERE id = $SELECTION').fetchone()
+row = conn.execute('SELECT id, task_number, title, spec_path FROM tasks WHERE task_number = $SELECTION').fetchone()
 print(f'{row[0]}|{row[1]}|{row[2]}|{row[3]}')
 conn.close()
 ")

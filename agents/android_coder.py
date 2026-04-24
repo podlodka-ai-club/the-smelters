@@ -220,14 +220,9 @@ async def run_android_coder_agent(task_id: int) -> int:
         prompt_file_abs = task_worktree / ".prompt.txt"
         prompt_file_abs.write_text(full_prompt)
         
-        # Create unique session ID using timestamp to avoid "Session not found" error
-        import time
-        session_id = f"task-{task_id}-{int(time.time() * 1000)}"
-        
         cmd = [
             "opencode", "run",
             "--model", gemini_model,
-            "--session", session_id,
             "implement task",  # Required positional argument
             "--file", str(prompt_file_abs)
         ]
@@ -305,6 +300,7 @@ async def run_android_coder_agent(task_id: int) -> int:
                     print(json.dumps({"ok": False, "error": "Agent produced no output"}))
                     return 1
             
+            # Skip second pass for now - we'll handle RUN_TESTS.sh check at the end
             # Continue to build verification
         except Exception as e:
             emit_event(

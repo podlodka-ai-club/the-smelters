@@ -64,7 +64,7 @@ if [ "$SELECTION" = "q" ] || [ -z "$SELECTION" ]; then
 fi
 
 # Validate selection - match by task_number
-if ! echo "$TASKS" | grep -q "|[0-9]*|$SELECTION|"; then
+if ! echo "$TASKS" | grep -q "|$SELECTION|"; then
     echo "Error: Invalid task number: $SELECTION"
     exit 1
 fi

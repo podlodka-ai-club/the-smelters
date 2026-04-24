@@ -243,15 +243,26 @@ async def run_android_coder_agent(task_id: int) -> int:
             
             stdout = stdout_bytes.decode("utf-8", errors="replace")
             
-            # Debug: print stderr if there's an issue
+            # Check for non-zero exit code
             if process.returncode != 0:
                 print(f"ERROR: opencode exit code: {process.returncode}", file=sys.stderr)
                 print(f"ERROR stdout (last 1000 chars): {stdout[-1000:]}", file=sys.stderr)
+                # Check if killed by signal (e.g., -9 = SIGKILL)
+                if process.returncode < 0:
+                    emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="killed_by_signal")
+                    print(json.dumps({"ok": False, "error": f"Agent killed by signal {abs(process.returncode)}"}))
+                    return 1
             
             lines = [line for line in stdout.splitlines() if line.strip()]
             if lines:
                 candidate = lines[-1].strip()
+                # Verify actual success AND RUN_TESTS.sh exists
                 if candidate.startswith("{") and '"ok"' in candidate:
+                    # Check if RUN_TESTS.sh was actually created (skip in tests)
+                    if os.environ.get("SKIP_RUN_TESTS_CHECK") != "1" and not (Path.cwd() / "RUN_TESTS.sh").exists():
+                        emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="missing_run_tests_sh")
+                        print(json.dumps({"ok": False, "error": "RUN_TESTS.sh was not created"}))
+                        return 1
                     emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
                     print(candidate)
                     # Don't return immediately - verify build first

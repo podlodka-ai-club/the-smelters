@@ -221,7 +221,9 @@ async def test_amain_gemini(monkeypatch, mock_env, capsys):
     monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini", "gemini_api_key": "test", "agent_timeout": 7200})
     async def mock_verify():
         return True
+    
     monkeypatch.setattr(android_coder, "verify_build_compiles", mock_verify)
+    monkeypatch.setenv("SKIP_RUN_TESTS_CHECK", "1")
 
     class MockProcess:
         returncode = 0
@@ -256,6 +258,7 @@ async def test_amain_gemini_no_json(monkeypatch, mock_env, capsys):
         return MockProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
+    monkeypatch.setenv("RUN_TESTS_SH_CREATED", "1")  # Skip file check
     
     assert await android_coder.run_android_coder_agent(1) == 0
     captured = capsys.readouterr()

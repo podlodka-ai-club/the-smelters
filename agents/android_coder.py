@@ -250,7 +250,7 @@ async def run_android_coder_agent(task_id: int) -> int:
                 if candidate.startswith("{") and '"ok"' in candidate:
                     emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
                     print(candidate)
-                    return process.returncode or 0
+                    # Don't return immediately - verify build first
 
             emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
             print(json.dumps({"ok": True, "summary": stdout[-200:] if stdout else "done", "script_generated": "RUN_TESTS.sh"}))

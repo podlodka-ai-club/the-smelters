@@ -10,7 +10,11 @@ cd "$REPO_ROOT"
 PYTHON="$REPO_ROOT/.venv/bin/python"
 if [ ! -f "$PYTHON" ]; then
     echo "Error: Python venv not found at $PYTHON"
-    exit 1
+    echo "Creating venv..."
+    cd "$REPO_ROOT"
+    uv venv --python python3.13
+    uv pip install claude-agent-sdk anthropic google-genai pyyaml pytest pytest-asyncio
+    PYTHON="$REPO_ROOT/.venv/bin/python"
 fi
 
 # Database path
@@ -103,6 +107,7 @@ echo ""
 TRACKER_DB="$DB_PATH" \
 REPO_ROOT="$REPO_ROOT" \
 TASKS_ROOT="$REPO_ROOT/tasks" \
+PYTHONPATH="$REPO_ROOT" \
 $PYTHON -m agents.android_coder "$task_id"
 
 echo ""

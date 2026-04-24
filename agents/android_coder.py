@@ -209,15 +209,27 @@ async def run_android_coder_agent(task_id: int) -> int:
         prompt_file = Path.cwd() / ".prompt.txt"
         prompt_file.write_text(full_prompt)
         
+        # Use current working directory (set to task worktree when script runs)
+        task_worktree = Path.cwd()
+        
+        # Use absolute path for file paths to avoid Path.cwd() issues
+        prompt_file_abs = task_worktree / ".prompt.txt"
+        prompt_file_abs.write_text(full_prompt)
+        
+        # Create unique session ID using timestamp to avoid "Session not found" error
+        import time
+        session_id = f"task-{task_id}-{int(time.time() * 1000)}"
+        
         cmd = [
             "opencode", "run",
             "--model", gemini_model,
-            "--attach", "http://localhost:4096",
-            "--file", str(prompt_file),
-            "implement task from prompt file"  # Required positional argument
+            "--session", session_id,
+            "implement task",  # Required positional argument
+            "--file", str(prompt_file_abs)
         ]
         
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
+        print(f"INFO: Working directory: {task_worktree}", file=sys.stderr)
         
         try:
             emit_event(events_path, task_id=task_id, actor="android_coder", type="compiling")
@@ -225,7 +237,7 @@ async def run_android_coder_agent(task_id: int) -> int:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=Path.cwd()
+                cwd=task_worktree
             )
             
             print(f"INFO: Process started with PID: {process.pid}", file=sys.stderr)
@@ -253,14 +265,20 @@ async def run_android_coder_agent(task_id: int) -> int:
                     emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="killed_by_signal")
                     print(json.dumps({"ok": False, "error": f"Agent killed by signal {abs(process.returncode)}"}))
                     return 1
+                # Non-zero exit means failure - don't check for RUN_TESTS.sh
+                emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="non_zero_exit")
+                print(json.dumps({"ok": False, "error": f"Agent exited with code {process.returncode}"}))
+                return 1
+            else:
+                lines = [line for line in stdout.splitlines() if line.strip()]
             
-            lines = [line for line in stdout.splitlines() if line.strip()]
+            # Only check for success if exit code is 0
             if lines:
                 candidate = lines[-1].strip()
                 # Verify actual success AND RUN_TESTS.sh exists
                 if candidate.startswith("{") and '"ok"' in candidate:
                     # Check if RUN_TESTS.sh was actually created (skip in tests)
-                    if os.environ.get("SKIP_RUN_TESTS_CHECK") != "1" and not (Path.cwd() / "RUN_TESTS.sh").exists():
+                    if os.environ.get("SKIP_RUN_TESTS_CHECK") != "1" and not (task_worktree / "RUN_TESTS.sh").exists():
                         emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="missing_run_tests_sh")
                         print(json.dumps({"ok": False, "error": "RUN_TESTS.sh was not created"}))
                         return 1
@@ -282,7 +300,7 @@ async def run_android_coder_agent(task_id: int) -> int:
             )
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
-
+    
     # Verify build compiles after successful agent run
     build_success = await verify_build_compiles()
     if not build_success:

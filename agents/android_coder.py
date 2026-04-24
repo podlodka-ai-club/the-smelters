@@ -202,14 +202,18 @@ async def run_android_coder_agent(task_id: int) -> int:
         if gemini_api_key:
             os.environ["GEMINI_API_KEY"] = gemini_api_key
         
-        gemini_model = config.get("gemini_model", "google/gemini-3.1-pro-preview-customtools")
+        gemini_model = config.get("gemini_model", "google/gemini-2.5-flash")
         full_prompt = f"{ANDROID_CODER_SYSTEM_PROMPT}\n\n{generate_prompt_for_task(task_id)}"
+        
+        # Write prompt to temp file to avoid command line length limits
+        prompt_file = Path.cwd() / ".prompt.txt"
+        prompt_file.write_text(full_prompt)
         
         cmd = [
             "opencode", "run",
             "--model", gemini_model,
             "--attach", "http://localhost:4096",
-            full_prompt
+            "--file", str(prompt_file)
         ]
         
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)

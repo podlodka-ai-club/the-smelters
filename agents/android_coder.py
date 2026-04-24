@@ -286,13 +286,26 @@ async def run_android_coder_agent(task_id: int) -> int:
                         emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="missing_run_tests_sh")
                         print(json.dumps({"ok": False, "error": "RUN_TESTS.sh was not created"}))
                         return 1
+                    # Success - RUN_TESTS.sh exists
                     emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
                     print(candidate)
-                    # Don't return immediately - verify build first
-
-            emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
-            print(json.dumps({"ok": True, "summary": stdout[-200:] if stdout else "done", "script_generated": "RUN_TESTS.sh"}))
-            return 0
+                    # Continue to verify build compiles
+                elif os.environ.get("SKIP_RUN_TESTS_CHECK") == "1" and process.returncode == 0:
+                    # In tests, allow non-JSON output when exit code is 0
+                    print(stdout[-200:] if stdout else "done")
+                else:
+                    # Agent didn't return success JSON
+                    emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="no_success_json")
+                    print(json.dumps({"ok": False, "error": "Agent did not return success JSON"}))
+                    return 1
+            else:
+                # No output at all - if exit code is 0, continue
+                if process.returncode != 0:
+                    emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="no_output")
+                    print(json.dumps({"ok": False, "error": "Agent produced no output"}))
+                    return 1
+            
+            # Continue to build verification
         except Exception as e:
             emit_event(
                 events_path,

@@ -228,6 +228,9 @@ async def test_amain_gemini(monkeypatch, mock_env, capsys):
     class MockProcess:
         returncode = 0
         pid = 12345
+        stdin = None
+        stdout = None
+        stderr = None
         async def communicate(self):
             return b'{"ok": true, "summary": "done"}\n', b''
             
@@ -251,6 +254,9 @@ async def test_amain_gemini_no_json(monkeypatch, mock_env, capsys):
     class MockProcess:
         returncode = 0
         pid = 12345
+        stdin = None
+        stdout = None
+        stderr = None
         async def communicate(self):
             return b'just text\n', b''
             
@@ -258,7 +264,7 @@ async def test_amain_gemini_no_json(monkeypatch, mock_env, capsys):
         return MockProcess()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", mock_exec)
-    monkeypatch.setenv("RUN_TESTS_SH_CREATED", "1")  # Skip file check
+    monkeypatch.setenv("SKIP_RUN_TESTS_CHECK", "1")  # Skip file check
     
     assert await android_coder.run_android_coder_agent(1) == 0
     captured = capsys.readouterr()

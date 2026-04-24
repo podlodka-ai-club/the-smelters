@@ -219,6 +219,9 @@ async def test_amain_claude_exception(monkeypatch, mock_env, capsys):
 async def test_amain_gemini(monkeypatch, mock_env, capsys):
     monkeypatch.setattr(android_coder, "generate_prompt_for_task", lambda task_id: f"task:{task_id}")
     monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini", "gemini_api_key": "test", "agent_timeout": 7200})
+    async def mock_verify():
+        return True
+    monkeypatch.setattr(android_coder, "verify_build_compiles", mock_verify)
 
     class MockProcess:
         returncode = 0
@@ -239,6 +242,9 @@ async def test_amain_gemini(monkeypatch, mock_env, capsys):
 async def test_amain_gemini_no_json(monkeypatch, mock_env, capsys):
     monkeypatch.setattr(android_coder, "generate_prompt_for_task", lambda task_id: f"task:{task_id}")
     monkeypatch.setattr(android_coder, "get_config", lambda: {"implementation": "gemini", "agent_timeout": 7200})
+    async def mock_verify():
+        return True
+    monkeypatch.setattr(android_coder, "verify_build_compiles", mock_verify)
 
     class MockProcess:
         returncode = 0

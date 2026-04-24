@@ -58,6 +58,31 @@ def get_config() -> dict[str, Any]:
     return {"implementation": "gemini", "agent_timeout": 7200}
 
 
+async def verify_build_compiles() -> bool:
+    """
+    Verifies the Android project compiles by running ./gradlew assembleDebug.
+    Returns True if build succeeds, False otherwise.
+    """
+    gradlew = Path.cwd() / "gradlew"
+    if not gradlew.exists():
+        return True  # Not an Android project, skip verification
+    
+    try:
+        process = await asyncio.create_subprocess_exec(
+            str(gradlew), "assembleDebug",
+            "--no-daemon",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=Path.cwd(),
+        )
+        stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=600)
+        return process.returncode == 0
+    except asyncio.TimeoutError:
+        return False
+    except Exception:
+        return False
+
+
 async def validate_tool_usage(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -229,7 +254,7 @@ async def run_android_coder_agent(task_id: int) -> int:
 
             emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
             print(json.dumps({"ok": True, "summary": stdout[-200:] if stdout else "done", "script_generated": "RUN_TESTS.sh"}))
-            return process.returncode or 0
+            return 0
         except Exception as e:
             emit_event(
                 events_path,
@@ -241,6 +266,13 @@ async def run_android_coder_agent(task_id: int) -> int:
             )
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
+
+    # Verify build compiles after successful agent run
+    build_success = await verify_build_compiles()
+    if not build_success:
+        emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="build_failed")
+        print(json.dumps({"ok": False, "error": "Build failed - code does not compile"}))
+        return 1
 
     # Default: Claude implementation
     anthropic_api_key = config.get("anthropic_api_key", "")
@@ -342,6 +374,14 @@ async def run_android_coder_agent(task_id: int) -> int:
 
     emit_event(events_path, task_id=task_id, actor="android_coder", type="finished", script_generated="RUN_TESTS.sh")
     print(json.dumps({"ok": True, "summary": last_text[:200] or "done", "script_generated": "RUN_TESTS.sh"}))
+
+    # Verify build compiles after successful agent run
+    build_success = await verify_build_compiles()
+    if not build_success:
+        emit_event(events_path, task_id=task_id, actor="android_coder", type="failed", error="build_failed")
+        print(json.dumps({"ok": False, "error": "Build failed - code does not compile"}))
+        return 1
+
     return 0
 
 

@@ -28,7 +28,10 @@ Rules:
 2. PREVENT TAUTOLOGICAL TESTS: You must use strict assertions. Do NOT test mocks in place of real implementations.
 3. IMPLEMENTATION PHASE: You may write the implementation code ONLY after all tests are saved.
 4. BUILD/COMPILE ONLY: Verify syntax by running build commands (e.g., `./gradlew assembleDebug`), but do NOT execute tests during your process.
-5. SCRIPT GENERATION: You MUST generate a `RUN_TESTS.sh` executable script containing the exact commands required to run the tests you wrote.
+5. SCRIPT GENERATION - CRITICAL: Before finishing, you MUST:
+   a) Create an executable shell script named `RUN_TESTS.sh` in the CURRENT directory
+   b) The script must contain EXACTLY the commands to run your tests (e.g., `./gradlew testDebugUnitTest` or `./gradlew testReleaseUnitTest`)
+   c) Run `cat RUN_TESTS.sh` and print its CONTENTS to prove it was created correctly
 6. Make the minimum change needed to satisfy the requirements.
 7. Do NOT modify unrelated files.
 8. When you are finished, stop and print ONE final line that is a JSON object: {"ok": true, "summary": "<...>", "script_generated": "RUN_TESTS.sh"}

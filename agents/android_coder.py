@@ -220,9 +220,15 @@ async def run_android_coder_agent(task_id: int) -> int:
         prompt_file_abs = task_worktree / ".prompt.txt"
         prompt_file_abs.write_text(full_prompt)
         
+        # Generate unique session ID for each run
+        import time
+        session_id = f"task{task_id}{int(time.time() * 1000)}"
+        
         cmd = [
             "opencode", "run",
             "--model", gemini_model,
+            "--attach", "http://localhost:4096",
+            "--dir", str(task_worktree),
             "implement task",  # Required positional argument
             "--file", str(prompt_file_abs)
         ]

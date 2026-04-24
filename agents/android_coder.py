@@ -213,7 +213,8 @@ async def run_android_coder_agent(task_id: int) -> int:
             "opencode", "run",
             "--model", gemini_model,
             "--attach", "http://localhost:4096",
-            "--file", str(prompt_file)
+            "--file", str(prompt_file),
+            "implement task from prompt file"  # Required positional argument
         ]
         
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)

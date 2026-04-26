@@ -14,11 +14,11 @@ from src.events import emit_event
 from src.models import Task
 from src.runtime_paths import project_runtime_paths
 from src.tracker import Tracker
-from src.worktree import create_worktree
+from src.worktree import ensure_task_worktree_dir
 
 
 DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_CODER_TIMEOUT = 180
+DEFAULT_CODER_TIMEOUT = 600  # 10 minutes instead of 3 minutes
 DEFAULT_REVIEWER_TIMEOUT = 90
 
 
@@ -76,7 +76,20 @@ class Orchestrator:
             raise AssertionError(f"project repo missing: {project_repo}")
         return project_repo
 
+    def _task_filter_status(self) -> tuple[str, int] | None:
+        if self.task_filter is None:
+            return None
+        for task in self.tracker.list_tasks():
+            if task.task_number == self.task_filter:
+                return task.status, task.attempts
+        return None
+
     async def _handle_task(self, task: Task) -> None:
+        print(
+            f"[orchestrator] claiming task #{task.task_number} ({task.title})",
+            file=sys.stderr,
+            flush=True,
+        )
         emit_event(
             self.events_path,
             task_id=task.task_number,
@@ -90,18 +103,14 @@ class Orchestrator:
         os.environ["REPO_ROOT"] = str(self.root_path)
         os.environ["EVENTS_PATH"] = str(self.events_path)
 
-        if task.worktree is None:
-            project_repo = self._project_repo()
-            worktree_path = create_worktree(
-                project_repo,
-                task_id=task.task_number,
-                worktrees_root=self.worktrees_root,
-            )
-            self.tracker.set_worktree(
-                task.id,
-                worktree=str(worktree_path),
-                branch=f"task-{task.task_number}",
-            )
+        _, worktree_changed = ensure_task_worktree_dir(
+            repo_root=self.root_path,
+            tracker=self.tracker,
+            task_id=task.id,
+            db_path=self.tracker.db_path,
+            project=self.project,
+        )
+        if worktree_changed:
             task = self.tracker.get_task(task.id)
             emit_event(
                 self.events_path,
@@ -116,6 +125,11 @@ class Orchestrator:
             task=task,
             events_path=self.events_path,
             timeout=self.coder_timeout,
+        )
+        print(
+            f"[orchestrator] coder exit_code={coder_result.exit_code}",
+            file=sys.stderr,
+            flush=True,
         )
         if coder_result.exit_code != 0:
             self._after_failure(task, f"coder_crash: {coder_result.error}")
@@ -132,6 +146,11 @@ class Orchestrator:
             Verdict(False, f"reviewer_crash: {reviewer_result.error}")
             if reviewer_result.exit_code != 0
             else _parse_verdict(reviewer_result.stdout_final)
+        )
+        print(
+            f"[orchestrator] reviewer exit_code={reviewer_result.exit_code}, verdict={'approved' if verdict.approved else 'rejected'}",
+            file=sys.stderr,
+            flush=True,
         )
         emit_event(
             self.events_path,
@@ -182,6 +201,24 @@ class Orchestrator:
                 task_id=self.task_filter,
             )
             if task is None:
+                task_state = self._task_filter_status()
+                if self.task_filter is not None and task_state is not None:
+                    status, attempts = task_state
+                    print(
+                        "[orchestrator] no ready task matching "
+                        f"--task={self.task_filter} (current status: {status}, attempts={attempts}). "
+                        "Reset with: sqlite3 database/DemoApp/tasks.db "
+                        "\"UPDATE tasks SET status='ready', attempts=0, review_notes=NULL "
+                        f"WHERE task_number={self.task_filter}\"",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                elif self.task_filter is not None:
+                    print(
+                        f"[orchestrator] no task found for --task={self.task_filter}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 return
             await self._handle_task(task)
 
@@ -205,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--coder-role", default="coder")
     parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
+    parser.add_argument("--coder-timeout", type=int, default=DEFAULT_CODER_TIMEOUT, help="Timeout in seconds for coder (default: 180)")
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
@@ -226,6 +264,7 @@ def main(argv: list[str] | None = None) -> int:
         reviewer_role=args.reviewer_role,
         task_filter=args.task,
         max_attempts=args.max_attempts,
+        coder_timeout=args.coder_timeout,
     )
     emit_event(runtime.events_path, task_id=None, actor="orchestrator", type="startup")
     if args.watch:

@@ -23,3 +23,15 @@ def project_runtime_paths(root: Path, project: str) -> ProjectRuntimePaths:
         events_path=root / "database" / project / "events.jsonl",
         worktrees_path=root / "worktrees" / project,
     )
+
+
+def infer_project_from_tracker_db(db_path: Path) -> str | None:
+    """Return project name from ``.../database/<Project>/tasks.db``."""
+    parts = db_path.resolve().parts
+    try:
+        idx = parts.index("database")
+    except ValueError:
+        return None
+    if idx + 1 < len(parts):
+        return parts[idx + 1]
+    return None

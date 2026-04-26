@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.runtime_paths import project_runtime_paths
+from src.runtime_paths import infer_project_from_tracker_db, project_runtime_paths
 
 
 def test_project_runtime_paths_resolve_all_locations(tmp_path: Path) -> None:
@@ -14,3 +14,10 @@ def test_project_runtime_paths_resolve_all_locations(tmp_path: Path) -> None:
     assert paths.db_path == tmp_path / "database" / "DemoApp" / "tasks.db"
     assert paths.events_path == tmp_path / "database" / "DemoApp" / "events.jsonl"
     assert paths.worktrees_path == tmp_path / "worktrees" / "DemoApp"
+
+
+def test_infer_project_from_tracker_db(tmp_path: Path) -> None:
+    db = tmp_path / "database" / "FooProj" / "tasks.db"
+    db.parent.mkdir(parents=True)
+    assert infer_project_from_tracker_db(db) == "FooProj"
+    assert infer_project_from_tracker_db(tmp_path / "tasks.db") is None

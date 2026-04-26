@@ -4,7 +4,8 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from src.worktree import create_worktree, diff_vs_main, remove_worktree
+from src.tracker import Tracker
+from src.worktree import create_worktree, diff_vs_main, ensure_task_worktree_dir, remove_worktree
 
 
 def _write_commit(repo: Path, relpath: str, content: str, msg: str) -> None:
@@ -114,3 +115,33 @@ def test_create_worktree_from_plain_directory_initializes_task_git_repo(tmp_path
         text=True,
     ).stdout.strip()
     assert branch == "task-7"
+
+
+def test_ensure_task_worktree_dir_repairs_canonical_projects_path(tmp_path: Path) -> None:
+    """SQLite must never point agents at ``projects/<P>``; coerce to ``worktrees/<P>/task-<N>``."""
+    proj = "DemoApp"
+    db_dir = tmp_path / "database" / proj
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "tasks.db"
+
+    tracker = Tracker(db_path)
+    tracker.init_schema()
+    row_id = tracker.insert_task(task_number=7, title="t", spec_path="tasks/DemoApp/7.md")
+
+    canonical = tmp_path / "projects" / proj
+    canonical.mkdir(parents=True)
+    (canonical / "README.md").write_text("src\n", encoding="utf-8")
+
+    tracker.set_worktree(row_id, worktree=str(canonical), branch="task-7")
+
+    path, changed = ensure_task_worktree_dir(
+        repo_root=tmp_path,
+        tracker=tracker,
+        task_id=row_id,
+        db_path=db_path,
+        project=proj,
+    )
+    assert changed is True
+    assert path.name == "task-7"
+    assert path.is_relative_to(tmp_path / "worktrees" / proj)
+    assert tracker.get_task(row_id).worktree == str(path)

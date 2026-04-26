@@ -12,9 +12,16 @@ import sys
 from agents.runner import run_agent
 from src.events import emit_event
 from src.models import Task
+from src.project_profile import detect_project_profile
 from src.runtime_paths import project_runtime_paths
 from src.tracker import Tracker
 from src.worktree import ensure_task_worktree_dir
+
+CODER_ROLE_BY_PROFILE = {
+    "python": "coder",
+    "android": "android_coder",
+    "generic": "coder",
+}
 
 
 DEFAULT_MAX_ATTEMPTS = 3
@@ -248,7 +255,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=Path.cwd(), type=Path)
     parser.add_argument("--task", type=int, default=None)
     parser.add_argument("--watch", action="store_true")
-    parser.add_argument("--coder-role", default="coder")
+    parser.add_argument("--coder-role", default=None, help="Override auto-detected coder role")
     parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     parser.add_argument("--coder-timeout", type=int, default=DEFAULT_CODER_TIMEOUT, help="Timeout in seconds for coder (default: 180)")
@@ -256,6 +263,15 @@ def main(argv: list[str] | None = None) -> int:
 
     root = args.root.resolve()
     agent_config = _load_agent_config(root)
+
+    # Auto-detect coder role from project type unless overridden
+    if args.coder_role is not None:
+        coder_role = args.coder_role
+    else:
+        project_repo = root / "projects" / args.project
+        profile = detect_project_profile(project_repo)
+        coder_role = CODER_ROLE_BY_PROFILE.get(profile.name, "coder")
+        print(f"[orchestrator] detected project profile: {profile.label} → coder role: {coder_role}", file=sys.stderr, flush=True)
 
     # Propagate API keys from config into env so subprocesses inherit them
     gemini_api_key = agent_config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
@@ -283,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         projects_root=root / "projects",
         tasks_root=root / "tasks",
         worktrees_root=runtime.worktrees_path,
-        coder_role=args.coder_role,
+        coder_role=coder_role,
         reviewer_role=args.reviewer_role,
         task_filter=args.task,
         max_attempts=args.max_attempts,

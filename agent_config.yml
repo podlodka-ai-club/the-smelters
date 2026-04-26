@@ -1,9 +1,9 @@
-# Android Coder Agent Configuration
+# Agent Configuration (applies to coder, reviewer, and android_coder)
 
 # Implementation choice: "gemini" (uses opencode CLI) or "claude" (uses claude_agent_sdk)
 implementation: gemini
 
-# Google Gemini API key - leave empty if using environment variable or opencode auth
+# Google Gemini API key - leave empty if using GEMINI_API_KEY env var or opencode auth
 gemini_api_key: ""
 
 # Anthropic API key - optional if you have Claude Code CLI subscription
@@ -31,6 +31,13 @@ gemini_model: google/gemini-3.1-pro-preview-customtools
 # - google/gemini-3.1-pro-preview   # strongest overall quality (no custom-tools variant)
 # - google/gemini-2.5-pro           # strong stable quality
 # - google/gemini-2.5-flash         # best value/speed paid default
+
+# Optional: attach to a running opencode server (start with `opencode serve`)
+# Leave empty to run opencode in standalone mode
+opencode_server_url: ""
+
+# Anthropic API key - leave empty if using ANTHROPIC_API_KEY env var or Claude Code subscription
+anthropic_api_key: ""
 
 # Timeout in seconds for the agent to complete a task (default: 2 hours = 7200 seconds)
 agent_timeout: 7200

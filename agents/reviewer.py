@@ -6,11 +6,24 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import Any
+
+import yaml
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
 from src.project_profile import detect_project_profile
 from src.tracker import Tracker
+
+
+def _get_config() -> dict[str, Any]:
+    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
+    if not config_path.exists():
+        config_path = Path("agent_config.yml")
+    if config_path.exists():
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    return {"implementation": "claude", "agent_timeout": 7200}
 
 
 REVIEWER_SYSTEM_PROMPT = """
@@ -75,7 +88,62 @@ def _extract_text(message: object) -> str:
     return ""
 
 
+async def _run_gemini(task_id: int, config: dict[str, Any]) -> int:
+    gemini_api_key = config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    if gemini_api_key:
+        os.environ["GEMINI_API_KEY"] = gemini_api_key
+        os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
+    agent_timeout = config.get("agent_timeout", 7200)
+    gemini_model = config.get("gemini_model", "google/gemini-2.5-flash")
+    server_url = config.get("opencode_server_url", "")
+    full_prompt = f"{REVIEWER_SYSTEM_PROMPT}\n\n{_build_user_prompt(task_id)}"
+    cmd = ["opencode", "run", "--model", gemini_model]
+    if server_url:
+        cmd += ["--attach", server_url]
+    cmd.append(full_prompt)
+    print(f"INFO: Running Gemini via opencode: {gemini_model}", file=sys.stderr)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=Path.cwd(),
+        )
+        try:
+            stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=agent_timeout)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            print(json.dumps({"approved": False, "notes": f"Reviewer timed out after {agent_timeout}s"}))
+            return 1
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        if process.returncode != 0:
+            print(f"ERROR: opencode exit {process.returncode}: {stdout[-500:]}", file=sys.stderr)
+        lines = [line for line in stdout.splitlines() if line.strip()]
+        if lines:
+            candidate = lines[-1].strip()
+            try:
+                parsed = json.loads(candidate)
+                print(json.dumps({"approved": bool(parsed["approved"]), "notes": str(parsed.get("notes", ""))}))
+                return process.returncode or 0
+            except (ValueError, KeyError, TypeError):
+                pass
+        print(json.dumps({"approved": False, "notes": "Reviewer did not emit valid JSON"}))
+        return 1
+    except Exception as e:
+        print(json.dumps({"approved": False, "notes": str(e)}))
+        return 1
+
+
 async def amain(task_id: int) -> int:
+    config = _get_config()
+    if config.get("implementation", "claude").lower() == "gemini":
+        return await _run_gemini(task_id, config)
+
+    anthropic_api_key = config.get("anthropic_api_key", "")
+    if anthropic_api_key:
+        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+
     options = ClaudeAgentOptions(
         system_prompt=REVIEWER_SYSTEM_PROMPT,
         allowed_tools=ALLOWED_TOOLS,

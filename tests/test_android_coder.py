@@ -42,9 +42,9 @@ def mock_env(monkeypatch, tmp_path):
     return tmp_path
 
 def test_get_config(mock_env, monkeypatch):
-    # Test fallback
+    # Test fallback — no config file, defaults from shared.agent_base.DEFAULT_CONFIG
     assert android_coder.get_config() == {
-        "implementation": "gemini",
+        "implementation": "claude",
         "agent_timeout": 7200,
         "agent_inactivity_timeout": 600,
     }
@@ -52,7 +52,7 @@ def test_get_config(mock_env, monkeypatch):
     # Test reading config
     config_data = {"implementation": "gemini", "gemini_api_key": "test_key", "agent_timeout": 3600}
     (mock_env / "agent_config.yml").write_text(yaml.dump(config_data))
-    assert android_coder.get_config() == config_data
+    assert android_coder.get_config() == {**config_data, "agent_inactivity_timeout": 600}
 
 @pytest.mark.asyncio
 async def test_can_use_tool():

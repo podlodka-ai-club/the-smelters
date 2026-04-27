@@ -24,9 +24,13 @@ async def run_agent(
     events_path: Path,
     timeout: float,
 ) -> AgentResult:
-    cmd = [_get_python_executable(), "-m", f"agents.{role}", str(task.id)]
+    module = role if "." in role else f"agents.{role}"
+    cmd = [_get_python_executable(), "-m", module, str(task.id)]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).parent.parent)
+    # Prevent cwd-as-package from shadowing repo-level packages (e.g. a project's
+    # own `tests/` dir hiding `tests/fixtures/fake_coder.py`).
+    env["PYTHONSAFEPATH"] = "1"
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,

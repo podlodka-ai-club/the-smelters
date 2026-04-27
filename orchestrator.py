@@ -249,6 +249,19 @@ def _load_agent_config(root: Path) -> dict:
     return {}
 
 
+def _read_key_from_shell_config(var_name: str) -> str:
+    """Read an API key from ~/.zshrc or ~/.bashrc as a last-resort fallback."""
+    import re
+    for rc in (Path.home() / ".zshrc", Path.home() / ".bashrc", Path.home() / ".bash_profile"):
+        if not rc.exists():
+            continue
+        for line in rc.read_text(errors="replace").splitlines():
+            m = re.match(rf"export\s+{re.escape(var_name)}=(.+)", line.strip())
+            if m:
+                return m.group(1).strip().strip('"').strip("'")
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -259,6 +272,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     parser.add_argument("--coder-timeout", type=int, default=DEFAULT_CODER_TIMEOUT, help="Timeout in seconds for coder (default: 180)")
+    _BACKENDS = ["claude-cli", "claude", "gemini"]
+    parser.add_argument("--coder", choices=_BACKENDS, default=None,
+                        help="Coder backend: claude-cli/claude = claude_agent_sdk (subscription), gemini = opencode")
+    parser.add_argument("--checker", choices=_BACKENDS, default=None,
+                        help="Checker backend: claude-cli/claude = claude_agent_sdk (subscription), gemini = opencode")
+    parser.add_argument("--coder-model", default=None,
+                        help="Model for the coder when --coder gemini (e.g. google/gemini-2.5-flash)")
+    parser.add_argument("--checker-model", default=None,
+                        help="Model for the checker when --checker gemini (e.g. google/gemini-2.5-flash)")
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
@@ -273,14 +295,34 @@ def main(argv: list[str] | None = None) -> int:
         coder_role = CODER_ROLE_BY_PROFILE.get(profile.name, "coder")
         print(f"[orchestrator] detected project profile: {profile.label} → coder role: {coder_role}", file=sys.stderr, flush=True)
 
-    # Propagate API keys from config into env so subprocesses inherit them
-    gemini_api_key = agent_config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    # Propagate API keys from config → env → shell config (last resort)
+    gemini_api_key = (
+        agent_config.get("gemini_api_key", "")
+        or os.environ.get("GEMINI_API_KEY", "")
+        or _read_key_from_shell_config("GEMINI_API_KEY")
+    )
     if gemini_api_key:
         os.environ["GEMINI_API_KEY"] = gemini_api_key
         os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
-    anthropic_api_key = agent_config.get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    anthropic_api_key = (
+        agent_config.get("anthropic_api_key", "")
+        or os.environ.get("ANTHROPIC_API_KEY", "")
+    )
     if anthropic_api_key:
         os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+
+    # Override implementation/model per role via env vars (picked up by load_config(env_prefix=...))
+    def _impl_from_backend(backend: str) -> str:
+        return "gemini" if backend == "gemini" else "claude"
+
+    if args.coder:
+        os.environ["CODER_IMPLEMENTATION"] = _impl_from_backend(args.coder)
+    if args.coder_model:
+        os.environ["CODER_MODEL"] = args.coder_model
+    if args.checker:
+        os.environ["CHECKER_IMPLEMENTATION"] = _impl_from_backend(args.checker)
+    if args.checker_model:
+        os.environ["CHECKER_MODEL"] = args.checker_model
 
     agent_timeout = float(agent_config.get("agent_timeout", DEFAULT_CODER_TIMEOUT))
     coder_timeout = agent_timeout

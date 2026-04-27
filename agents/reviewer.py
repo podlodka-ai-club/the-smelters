@@ -4,26 +4,20 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from pathlib import Path
 import sys
-from typing import Any
-
-import yaml
+from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 
+from shared.agent_base import (
+    apply_anthropic_key,
+    extract_text,
+    last_nonempty_line,
+    load_config,
+    run_gemini_subprocess,
+)
 from src.project_profile import detect_project_profile
 from src.tracker import Tracker
-
-
-def _get_config() -> dict[str, Any]:
-    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
-    if not config_path.exists():
-        config_path = Path("agent_config.yml")
-    if config_path.exists():
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-    return {"implementation": "claude", "agent_timeout": 7200}
 
 
 REVIEWER_SYSTEM_PROMPT = """
@@ -50,6 +44,10 @@ Nothing else on that line.
 """
 
 ALLOWED_TOOLS = ["Read", "Bash", "Glob", "Grep"]
+
+# Legacy aliases — kept so existing tests can monkeypatch by these names.
+_get_config = load_config
+_extract_text = extract_text
 
 
 def _load_task(task_id: int) -> tuple[int, str, str, str]:
@@ -78,71 +76,43 @@ def _build_user_prompt(task_id: int) -> str:
     )
 
 
-def _extract_text(message: object) -> str:
-    result = getattr(message, "result", None)
-    if isinstance(result, str):
-        return result
-    text = getattr(message, "text", None)
-    if isinstance(text, str):
-        return text
-    return ""
+def _format_verdict(approved: bool, notes: str) -> str:
+    return json.dumps({"approved": approved, "notes": notes})
 
 
-async def _run_gemini(task_id: int, config: dict[str, Any]) -> int:
-    gemini_api_key = config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
-    if gemini_api_key:
-        os.environ["GEMINI_API_KEY"] = gemini_api_key
-        os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
-    agent_timeout = config.get("agent_timeout", 7200)
-    gemini_model = config.get("gemini_model", "google/gemini-2.5-flash")
-    server_url = config.get("opencode_server_url", "")
-    full_prompt = f"{REVIEWER_SYSTEM_PROMPT}\n\n{_build_user_prompt(task_id)}"
-    cmd = ["opencode", "run", "--model", gemini_model]
-    if server_url:
-        cmd += ["--attach", server_url]
-    cmd.append(full_prompt)
-    print(f"INFO: Running Gemini via opencode: {gemini_model}", file=sys.stderr)
+def _parse_verdict_line(candidate: str) -> str | None:
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=Path.cwd(),
-        )
-        try:
-            stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=agent_timeout)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            print(json.dumps({"approved": False, "notes": f"Reviewer timed out after {agent_timeout}s"}))
-            return 1
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        if process.returncode != 0:
-            print(f"ERROR: opencode exit {process.returncode}: {stdout[-500:]}", file=sys.stderr)
-        lines = [line for line in stdout.splitlines() if line.strip()]
-        if lines:
-            candidate = lines[-1].strip()
-            try:
-                parsed = json.loads(candidate)
-                print(json.dumps({"approved": bool(parsed["approved"]), "notes": str(parsed.get("notes", ""))}))
-                return process.returncode or 0
-            except (ValueError, KeyError, TypeError):
-                pass
-        print(json.dumps({"approved": False, "notes": "Reviewer did not emit valid JSON"}))
+        parsed = json.loads(candidate)
+        return _format_verdict(bool(parsed["approved"]), str(parsed.get("notes", "")))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+async def _run_gemini(task_id: int, config: dict) -> int:
+    full_prompt = f"{REVIEWER_SYSTEM_PROMPT}\n\n{_build_user_prompt(task_id)}"
+    result = await run_gemini_subprocess(full_prompt, config)
+    if result.timed_out:
+        print(_format_verdict(False, f"Reviewer timed out after {result.timeout_secs}s"))
         return 1
-    except Exception as e:
-        print(json.dumps({"approved": False, "notes": str(e)}))
+    if result.error is not None:
+        print(_format_verdict(False, result.error))
         return 1
+    candidate = last_nonempty_line(result.stdout)
+    if candidate is not None:
+        formatted = _parse_verdict_line(candidate)
+        if formatted is not None:
+            print(formatted)
+            return result.returncode
+    print(_format_verdict(False, "Reviewer did not emit valid JSON"))
+    return 1
 
 
 async def amain(task_id: int) -> int:
-    config = _get_config()
+    config = _get_config(env_prefix="CHECKER_")
     if config.get("implementation", "claude").lower() == "gemini":
         return await _run_gemini(task_id, config)
 
-    anthropic_api_key = config.get("anthropic_api_key", "")
-    if anthropic_api_key:
-        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+    apply_anthropic_key(config)
 
     options = ClaudeAgentOptions(
         system_prompt=REVIEWER_SYSTEM_PROMPT,
@@ -157,24 +127,14 @@ async def amain(task_id: int) -> int:
         if extracted:
             last_text = extracted
 
-    lines = [line for line in last_text.splitlines() if line.strip()]
-    if lines:
-        candidate = lines[-1].strip()
-        try:
-            parsed = json.loads(candidate)
-            print(
-                json.dumps(
-                    {
-                        "approved": bool(parsed["approved"]),
-                        "notes": str(parsed.get("notes", "")),
-                    }
-                )
-            )
+    candidate = last_nonempty_line(last_text)
+    if candidate is not None:
+        formatted = _parse_verdict_line(candidate)
+        if formatted is not None:
+            print(formatted)
             return 0
-        except (ValueError, KeyError, TypeError):
-            pass
 
-    print(json.dumps({"approved": False, "notes": "Reviewer did not emit valid JSON"}))
+    print(_format_verdict(False, "Reviewer did not emit valid JSON"))
     return 0
 
 

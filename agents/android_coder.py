@@ -20,43 +20,14 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
 import anthropic
 
+from shared.constants import BASH_DENY
+from shared.prompts import ANDROID_CODER_SYSTEM_PROMPT
 from src.project_profile import detect_project_profile
 from src.tracker import Tracker
 from src.events import emit_event
 from src.worktree import ensure_task_worktree_dir
 
-ANDROID_CODER_SYSTEM_PROMPT = """
-You are Android Coder, a focused software engineer working on ONE Android task at a time.
-You MUST strictly follow a Test-Driven Development (TDD) approach.
-
-Rules:
-1. STRICT TEST-FIRST: Read the spec file first. You MUST write *all* unit/integration tests based on the task requirements BEFORE writing the implementation.
-2. PREVENT TAUTOLOGICAL TESTS: You must use strict assertions. Do NOT test mocks in place of real implementations.
-3. IMPLEMENTATION PHASE: You may write the implementation code ONLY after all tests are saved.
-4. BUILD/COMPILE ONLY: Verify syntax by running build commands (e.g., `./gradlew assembleDebug`), but do NOT execute tests during your process.
-5. SCRIPT GENERATION - CRITICAL: Before printing the final JSON, FIRST create and verify:
-   a) Create an executable shell script named `RUN_TESTS.sh` in the CURRENT working directory
-   b) The script must contain EXACTLY the commands to run your tests (e.g., `./gradlew testDebugUnitTest`)
-   c) Run `ls -la RUN_TESTS.sh` to verify it exists
-   d) Run `cat RUN_TESTS.sh` and print its full contents to prove it was created
-6. Make the minimum change needed to satisfy the requirements.
-7. Do NOT modify unrelated files.
-8. NEVER run git commit, git push, git merge, or git rebase.
-9. When you are finished, stop and print ONE final line that is a JSON object: {"ok": true, "summary": "<...>", "script_generated": "RUN_TESTS.sh"}
-
-If a previous review flagged issues, address them literally. Do not expand scope.
-"""
-
 ALLOWED_TOOLS = ["Read", "Edit", "Write", "Glob", "Grep", "Bash"]
-BASH_DENY = [
-    re.compile(r"\brm\s+-rf\s+/"),
-    re.compile(r"\bgit\s+push\b"),
-    re.compile(r"\bgit\s+commit\b"),
-    re.compile(r"\bgit\s+merge\b"),
-    re.compile(r"\bgit\s+rebase\b"),
-    re.compile(r"\bcurl\b"),
-    re.compile(r"\bwget\b"),
-]
 
 
 import yaml
@@ -73,17 +44,11 @@ OPENCODE_ERROR_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 
 def get_config() -> dict[str, Any]:
-    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
-    if not config_path.exists():
-        config_path = Path("agent_config.yml")
-    if config_path.exists():
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-    return {
-        "implementation": "gemini",
-        "agent_timeout": 7200,
-        "agent_inactivity_timeout": 600,
-    }
+    from shared.agent_base import load_config
+    config = load_config(env_prefix="CODER_")
+    config.setdefault("agent_timeout", 7200)
+    config.setdefault("agent_inactivity_timeout", 600)
+    return config
 
 
 def redact_env_snapshot() -> dict[str, str]:
@@ -474,7 +439,7 @@ async def run_android_coder_agent(task_id: int) -> int:
         cmd = ["opencode", "run", "--model", gemini_model]
         if server_url:
             cmd += ["--attach", server_url]
-        cmd += ["--dir", str(task_worktree), opencode_message, "--file", str(prompt_file_abs)]
+        cmd += [opencode_message, "--file", str(prompt_file_abs)]
         
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
         print(f"INFO: Working directory: {task_worktree}", file=sys.stderr)

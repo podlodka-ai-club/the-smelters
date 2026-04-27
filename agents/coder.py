@@ -2,31 +2,25 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
 import json
 import os
-from pathlib import Path
 import re
 import sys
-from typing import Any
-
-import yaml
+from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
-from claude_agent_sdk.types import PermissionResultAllow, PermissionResultDeny, ToolPermissionContext
 
+from shared.agent_base import (
+    apply_anthropic_key,
+    extract_text,
+    last_nonempty_line,
+    load_config,
+    make_bash_deny_check,
+    run_gemini_subprocess,
+    streaming_prompt,
+)
 from src.project_profile import detect_project_profile
 from src.tracker import Tracker
-
-
-def _get_config() -> dict[str, Any]:
-    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
-    if not config_path.exists():
-        config_path = Path("agent_config.yml")
-    if config_path.exists():
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-    return {"implementation": "claude", "agent_timeout": 7200}
 
 
 CODER_SYSTEM_PROMPT = """
@@ -54,20 +48,11 @@ BASH_DENY = [
     re.compile(r"\buv\s+pip\s+install\b"),
 ]
 
-
-async def _can_use_tool(
-    tool_name: str,
-    tool_input: dict[str, Any],
-    _context: ToolPermissionContext,
-) -> PermissionResultAllow | PermissionResultDeny:
-    if tool_name != "Bash":
-        return PermissionResultAllow()
-
-    command = str(tool_input.get("command", ""))
-    for pattern in BASH_DENY:
-        if pattern.search(command):
-            return PermissionResultDeny(message=f"denied by policy: matches {pattern.pattern}")
-    return PermissionResultAllow()
+# Legacy aliases — kept so existing tests can monkeypatch by these names.
+_get_config = load_config
+_extract_text = extract_text
+_streaming_prompt = streaming_prompt
+_can_use_tool = make_bash_deny_check(BASH_DENY)
 
 
 def _load_task(task_id: int) -> tuple[int, str, str, str | None, str]:
@@ -97,67 +82,21 @@ def _build_user_prompt(task_id: int) -> str:
     )
 
 
-def _extract_text(message: object) -> str:
-    result = getattr(message, "result", None)
-    if isinstance(result, str):
-        return result
-    text = getattr(message, "text", None)
-    if isinstance(text, str):
-        return text
-    return ""
-
-
-async def _streaming_prompt(prompt: str) -> AsyncIterator[dict[str, object]]:
-    yield {
-        "type": "user",
-        "message": {"role": "user", "content": prompt},
-        "parent_tool_use_id": None,
-        "session_id": "default",
-    }
-
-
-async def _run_gemini(task_id: int, config: dict[str, Any]) -> int:
-    gemini_api_key = config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
-    if gemini_api_key:
-        os.environ["GEMINI_API_KEY"] = gemini_api_key
-        os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
-    agent_timeout = config.get("agent_timeout", 7200)
-    gemini_model = config.get("gemini_model", "google/gemini-2.5-flash")
-    server_url = config.get("opencode_server_url", "")
+async def _run_gemini(task_id: int, config: dict) -> int:
     full_prompt = f"{CODER_SYSTEM_PROMPT}\n\n{_build_user_prompt(task_id)}"
-    cmd = ["opencode", "run", "--model", gemini_model]
-    if server_url:
-        cmd += ["--attach", server_url]
-    cmd.append(full_prompt)
-    print(f"INFO: Running Gemini via opencode: {gemini_model}", file=sys.stderr)
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=Path.cwd(),
-        )
-        try:
-            stdout_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=agent_timeout)
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
-            print(json.dumps({"ok": False, "error": f"Agent timed out after {agent_timeout}s"}))
-            return 1
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        if process.returncode != 0:
-            print(f"ERROR: opencode exit {process.returncode}: {stdout[-500:]}", file=sys.stderr)
-        lines = [line for line in stdout.splitlines() if line.strip()]
-        if lines:
-            candidate = lines[-1].strip()
-            if candidate.startswith("{") and '"ok"' in candidate:
-                print(candidate)
-                return process.returncode or 0
-        print(json.dumps({"ok": True, "summary": stdout[-200:] if stdout else "done"}))
-        return process.returncode or 0
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
+    result = await run_gemini_subprocess(full_prompt, config)
+    if result.timed_out:
+        print(json.dumps({"ok": False, "error": f"Agent timed out after {result.timeout_secs}s"}))
         return 1
+    if result.error is not None:
+        print(json.dumps({"ok": False, "error": result.error}))
+        return 1
+    candidate = last_nonempty_line(result.stdout)
+    if candidate and candidate.startswith("{") and '"ok"' in candidate:
+        print(candidate)
+        return result.returncode
+    print(json.dumps({"ok": True, "summary": result.stdout[-200:] if result.stdout else "done"}))
+    return result.returncode
 
 
 async def amain(task_id: int) -> int:
@@ -165,9 +104,7 @@ async def amain(task_id: int) -> int:
     if config.get("implementation", "claude").lower() == "gemini":
         return await _run_gemini(task_id, config)
 
-    anthropic_api_key = config.get("anthropic_api_key", "")
-    if anthropic_api_key:
-        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+    apply_anthropic_key(config)
 
     options = ClaudeAgentOptions(
         system_prompt=CODER_SYSTEM_PROMPT,
@@ -183,12 +120,10 @@ async def amain(task_id: int) -> int:
         if extracted:
             last_text = extracted
 
-    lines = [line for line in last_text.splitlines() if line.strip()]
-    if lines:
-        candidate = lines[-1].strip()
-        if candidate.startswith("{") and '"ok"' in candidate:
-            print(candidate)
-            return 0
+    candidate = last_nonempty_line(last_text)
+    if candidate and candidate.startswith("{") and '"ok"' in candidate:
+        print(candidate)
+        return 0
 
     print(json.dumps({"ok": True, "summary": last_text[:200] or "done"}))
     return 0

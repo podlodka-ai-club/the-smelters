@@ -108,6 +108,20 @@ def ensure_task_worktree_dir(
     return worktree_path, True
 
 
+def _write_local_properties(worktree_path: Path) -> None:
+    """Write local.properties with Android SDK path if not already present."""
+    local_props = worktree_path / "local.properties"
+    if local_props.exists():
+        return
+    sdk_dir = (
+        os.environ.get("ANDROID_HOME")
+        or os.environ.get("ANDROID_SDK_ROOT")
+        or str(Path.home() / "Library" / "Android" / "sdk")
+    )
+    if Path(sdk_dir).is_dir():
+        local_props.write_text(f"sdk.dir={sdk_dir}\n")
+
+
 def create_worktree(repo: Path, *, task_id: int, worktrees_root: Path) -> Path:
     branch = f"task-{task_id}"
     worktree_path = worktrees_root / branch
@@ -117,6 +131,7 @@ def create_worktree(repo: Path, *, task_id: int, worktrees_root: Path) -> Path:
         return worktree_path
 
     shutil.copytree(repo, worktree_path, ignore=COPY_IGNORE_PATTERNS)
+    _write_local_properties(worktree_path)
     _init_task_repo(worktree_path, branch)
     return worktree_path
 

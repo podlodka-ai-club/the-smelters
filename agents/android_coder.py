@@ -445,7 +445,7 @@ async def run_android_coder_agent(task_id: int) -> int:
         cmd = ["opencode", "run", "--model", gemini_model]
         if server_url:
             cmd += ["--attach", server_url]
-        cmd += ["--dir", str(task_worktree), opencode_message, "--file", str(prompt_file_abs)]
+        cmd += [opencode_message, "--file", str(prompt_file_abs)]
         
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
         print(f"INFO: Working directory: {task_worktree}", file=sys.stderr)

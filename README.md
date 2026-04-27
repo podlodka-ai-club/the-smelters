@@ -19,6 +19,7 @@ Both pipelines share constants, prompts, and helper utilities under `shared/`. S
 - [Adding A New Agent Provider](#adding-a-new-agent-provider)
 - [Adding Another Agent SDK](#adding-another-agent-sdk)
 - [Adding Platform-Specific Agents](#adding-platform-specific-agents)
+- [Configuration](#configuration)
 - [Getting Started](#getting-started)
 - [Adding A New Project](#adding-a-new-project)
 - [How To Verify The System](#how-to-verify-the-system)
@@ -261,6 +262,47 @@ Typical platform guidance:
 - Python coder/reviewer: use `pytest` or the repo's existing Python test command.
 
 When platform agents become common, the next clean step is to add explicit role selection in `orchestrator.py`, for example `--coder-role android_coder --reviewer-role android_reviewer`, instead of only wiring them programmatically.
+
+## Configuration
+
+### Gemini via opencode (android_coder default)
+
+`android_coder` uses opencode with Gemini by default. Set the API key in **one** of these ways, in order of preference:
+
+1. **`agent_config.yml`** (persists across sessions, no env juggling):
+   ```yaml
+   gemini_api_key: "AIza..."
+   ```
+
+2. **Environment variable** (shell must export it before running):
+   ```bash
+   export GOOGLE_GENERATIVE_AI_API_KEY="AIza..."
+   ```
+   > Note: opencode requires `GOOGLE_GENERATIVE_AI_API_KEY`, not `GEMINI_API_KEY`.
+   > The agent sets both automatically when `gemini_api_key` is provided in config.
+
+3. **`opencode auth`** (interactive, stored in opencode's own credential store).
+
+Leave `opencode_server_url` empty in `agent_config.yml`. Standalone mode works correctly once the key is available.
+
+### Android SDK (for Android projects)
+
+`local.properties` with the SDK path is created automatically in each new worktree from `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or the default macOS location `~/Library/Android/sdk`. No manual action needed as long as the SDK is installed.
+
+If the build still fails with `SDK location not found`, set the variable explicitly:
+```bash
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+```
+
+### Resetting a failed task
+
+If a task is stuck in `failed` or `closed` status and you want to retry it:
+```bash
+sqlite3 database/<Project>/tasks.db \
+  "UPDATE tasks SET status='ready', attempts=0, review_notes=NULL WHERE task_number=<N>"
+```
+
+Then re-run the orchestrator normally.
 
 ## Getting Started
 

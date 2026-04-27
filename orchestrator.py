@@ -249,6 +249,19 @@ def _load_agent_config(root: Path) -> dict:
     return {}
 
 
+def _read_key_from_shell_config(var_name: str) -> str:
+    """Read an API key from ~/.zshrc or ~/.bashrc as a last-resort fallback."""
+    import re
+    for rc in (Path.home() / ".zshrc", Path.home() / ".bashrc", Path.home() / ".bash_profile"):
+        if not rc.exists():
+            continue
+        for line in rc.read_text(errors="replace").splitlines():
+            m = re.match(rf"export\s+{re.escape(var_name)}=(.+)", line.strip())
+            if m:
+                return m.group(1).strip().strip('"').strip("'")
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
@@ -282,12 +295,19 @@ def main(argv: list[str] | None = None) -> int:
         coder_role = CODER_ROLE_BY_PROFILE.get(profile.name, "coder")
         print(f"[orchestrator] detected project profile: {profile.label} → coder role: {coder_role}", file=sys.stderr, flush=True)
 
-    # Propagate API keys from config into env so subprocesses inherit them
-    gemini_api_key = agent_config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    # Propagate API keys from config → env → shell config (last resort)
+    gemini_api_key = (
+        agent_config.get("gemini_api_key", "")
+        or os.environ.get("GEMINI_API_KEY", "")
+        or _read_key_from_shell_config("GEMINI_API_KEY")
+    )
     if gemini_api_key:
         os.environ["GEMINI_API_KEY"] = gemini_api_key
         os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
-    anthropic_api_key = agent_config.get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    anthropic_api_key = (
+        agent_config.get("anthropic_api_key", "")
+        or os.environ.get("ANTHROPIC_API_KEY", "")
+    )
     if anthropic_api_key:
         os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
 

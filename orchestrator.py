@@ -259,6 +259,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     parser.add_argument("--coder-timeout", type=int, default=DEFAULT_CODER_TIMEOUT, help="Timeout in seconds for coder (default: 180)")
+    _BACKENDS = ["claude-cli", "claude", "gemini"]
+    parser.add_argument("--coder", choices=_BACKENDS, default=None,
+                        help="Coder backend: claude-cli/claude = claude_agent_sdk (subscription), gemini = opencode")
+    parser.add_argument("--checker", choices=_BACKENDS, default=None,
+                        help="Checker backend: claude-cli/claude = claude_agent_sdk (subscription), gemini = opencode")
+    parser.add_argument("--coder-model", default=None,
+                        help="Model for the coder when --coder gemini (e.g. google/gemini-2.5-flash)")
+    parser.add_argument("--checker-model", default=None,
+                        help="Model for the checker when --checker gemini (e.g. google/gemini-2.5-flash)")
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
@@ -281,6 +290,19 @@ def main(argv: list[str] | None = None) -> int:
     anthropic_api_key = agent_config.get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
     if anthropic_api_key:
         os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+
+    # Override implementation/model per role via env vars (picked up by load_config(env_prefix=...))
+    def _impl_from_backend(backend: str) -> str:
+        return "gemini" if backend == "gemini" else "claude"
+
+    if args.coder:
+        os.environ["CODER_IMPLEMENTATION"] = _impl_from_backend(args.coder)
+    if args.coder_model:
+        os.environ["CODER_MODEL"] = args.coder_model
+    if args.checker:
+        os.environ["CHECKER_IMPLEMENTATION"] = _impl_from_backend(args.checker)
+    if args.checker_model:
+        os.environ["CHECKER_MODEL"] = args.checker_model
 
     agent_timeout = float(agent_config.get("agent_timeout", DEFAULT_CODER_TIMEOUT))
     coder_timeout = agent_timeout

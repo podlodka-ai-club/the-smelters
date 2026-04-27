@@ -108,7 +108,7 @@ async def _run_gemini(task_id: int, config: dict) -> int:
 
 
 async def amain(task_id: int) -> int:
-    config = _get_config()
+    config = _get_config(env_prefix="CHECKER_")
     if config.get("implementation", "claude").lower() == "gemini":
         return await _run_gemini(task_id, config)
 

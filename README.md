@@ -294,6 +294,44 @@ If the build still fails with `SDK location not found`, set the variable explici
 export ANDROID_HOME="$HOME/Library/Android/sdk"
 ```
 
+### Choosing backend per run (`--coder` / `--checker`)
+
+Both orchestrators accept `--coder` and `--checker` flags that override `agent_config.yml` without editing the file:
+
+| Flag value | Backend | Auth required |
+|---|---|---|
+| `claude-cli` | `claude_agent_sdk` (Claude Code subscription) | none — uses CLI auth |
+| `claude` | same as `claude-cli` | none |
+| `gemini` | opencode + Gemini | `GOOGLE_GENERATIVE_AI_API_KEY` or `gemini_api_key` in config |
+
+Optional `--coder-model` / `--checker-model` override the model when using `gemini`:
+
+```bash
+# Claude subscription for both (default recommended)
+.venv/bin/python orchestrator.py --project DemoApp --task 10 \
+  --coder claude-cli --checker claude-cli
+
+# Gemini for both
+.venv/bin/python orchestrator.py --project DemoApp --task 10 \
+  --coder gemini --checker gemini
+
+# Mixed: Gemini codes, Claude reviews
+.venv/bin/python orchestrator.py --project DemoApp --task 10 \
+  --coder gemini --checker claude-cli
+
+# Mixed: Claude codes, Gemini reviews
+.venv/bin/python orchestrator.py --project DemoApp --task 10 \
+  --coder claude-cli --checker gemini
+
+# Custom Gemini model
+.venv/bin/python orchestrator.py --project DemoApp --task 10 \
+  --coder gemini --coder-model google/gemini-2.5-flash
+```
+
+When `--coder`/`--checker` are omitted, the backend falls back to `implementation` in `agent_config.yml`.
+
+> **Note:** `gemini_api_key` in `agent_config.yml` is intentionally left empty — store the key in `GOOGLE_GENERATIVE_AI_API_KEY` env var or use `opencode auth`. Never commit API keys to git.
+
 ### Resetting a failed task
 
 If a task is stuck in `failed` or `closed` status and you want to retry it:

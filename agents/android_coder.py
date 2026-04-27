@@ -44,17 +44,11 @@ OPENCODE_ERROR_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 
 def get_config() -> dict[str, Any]:
-    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
-    if not config_path.exists():
-        config_path = Path("agent_config.yml")
-    if config_path.exists():
-        with open(config_path) as f:
-            return yaml.safe_load(f)
-    return {
-        "implementation": "gemini",
-        "agent_timeout": 7200,
-        "agent_inactivity_timeout": 600,
-    }
+    from shared.agent_base import load_config
+    config = load_config(env_prefix="CODER_")
+    config.setdefault("agent_timeout", 7200)
+    config.setdefault("agent_inactivity_timeout", 600)
+    return config
 
 
 def redact_env_snapshot() -> dict[str, str]:

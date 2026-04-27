@@ -23,10 +23,14 @@ def _get_config() -> dict[str, Any]:
     config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
     if not config_path.exists():
         config_path = Path("agent_config.yml")
+    config = {}
     if config_path.exists():
         with open(config_path) as f:
-            return yaml.safe_load(f)
-    return {"implementation": "claude", "agent_timeout": 7200}
+            config = yaml.safe_load(f) or {}
+    # AGENT_IMPLEMENTATION env var (set by orchestrator --agent flag) takes priority
+    if env_impl := os.environ.get("AGENT_IMPLEMENTATION"):
+        config["implementation"] = env_impl
+    return config or {"implementation": "claude", "agent_timeout": 7200}
 
 
 CODER_SYSTEM_PROMPT = """

@@ -259,10 +259,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     parser.add_argument("--coder-timeout", type=int, default=DEFAULT_CODER_TIMEOUT, help="Timeout in seconds for coder (default: 180)")
+    parser.add_argument("--agent", choices=["claude", "gemini"], default=None, help="Override implementation from agent_config.yml")
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
     agent_config = _load_agent_config(root)
+
+    # --agent flag overrides implementation in agent_config.yml
+    if args.agent is not None:
+        agent_config["implementation"] = args.agent
+        print(f"[orchestrator] implementation overridden via --agent: {args.agent}", file=sys.stderr, flush=True)
+    os.environ["AGENT_IMPLEMENTATION"] = agent_config.get("implementation", "claude")
 
     # Auto-detect coder role from project type unless overridden
     if args.coder_role is not None:

@@ -7,6 +7,7 @@ from agents import reviewer
 
 @pytest.mark.asyncio
 async def test_amain_uses_noninteractive_permission_mode(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(reviewer, "_get_config", lambda: {"implementation": "claude"})
     monkeypatch.setattr(reviewer, "_build_user_prompt", lambda task_id: f"review:{task_id}")
 
     async def fake_query(*, prompt, options):  # type: ignore[no-untyped-def]

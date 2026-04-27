@@ -9,6 +9,7 @@ from agents import coder
 
 @pytest.mark.asyncio
 async def test_amain_uses_streaming_prompt_for_query(monkeypatch) -> None:
+    monkeypatch.setattr(coder, "_get_config", lambda: {"implementation": "claude"})
     monkeypatch.setattr(coder, "_build_user_prompt", lambda task_id: f"task:{task_id}")
 
     async def fake_query(*, prompt, options):  # type: ignore[no-untyped-def]

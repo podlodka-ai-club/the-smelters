@@ -12,13 +12,20 @@ import sys
 from agents.runner import run_agent
 from src.events import emit_event
 from src.models import Task
+from src.project_profile import detect_project_profile
 from src.runtime_paths import project_runtime_paths
 from src.tracker import Tracker
 from src.worktree import ensure_task_worktree_dir
 
+CODER_ROLE_BY_PROFILE = {
+    "python": "coder",
+    "android": "android_coder",
+    "generic": "coder",
+}
+
 
 DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_CODER_TIMEOUT = 600  # 10 minutes instead of 3 minutes
+DEFAULT_CODER_TIMEOUT = 600
 DEFAULT_REVIEWER_TIMEOUT = 90
 
 
@@ -233,19 +240,51 @@ class Orchestrator:
             await self._handle_task(task)
 
 
+def _load_agent_config(root: Path) -> dict:
+    config_path = root / "agent_config.yml"
+    if config_path.exists():
+        import yaml
+        with open(config_path) as f:
+            return yaml.safe_load(f) or {}
+    return {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", required=True)
     parser.add_argument("--root", default=Path.cwd(), type=Path)
     parser.add_argument("--task", type=int, default=None)
     parser.add_argument("--watch", action="store_true")
-    parser.add_argument("--coder-role", default="coder")
+    parser.add_argument("--coder-role", default=None, help="Override auto-detected coder role")
     parser.add_argument("--reviewer-role", default="reviewer")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
     parser.add_argument("--coder-timeout", type=int, default=DEFAULT_CODER_TIMEOUT, help="Timeout in seconds for coder (default: 180)")
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
+    agent_config = _load_agent_config(root)
+
+    # Auto-detect coder role from project type unless overridden
+    if args.coder_role is not None:
+        coder_role = args.coder_role
+    else:
+        project_repo = root / "projects" / args.project
+        profile = detect_project_profile(project_repo)
+        coder_role = CODER_ROLE_BY_PROFILE.get(profile.name, "coder")
+        print(f"[orchestrator] detected project profile: {profile.label} → coder role: {coder_role}", file=sys.stderr, flush=True)
+
+    # Propagate API keys from config into env so subprocesses inherit them
+    gemini_api_key = agent_config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    if gemini_api_key:
+        os.environ["GEMINI_API_KEY"] = gemini_api_key
+        os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
+    anthropic_api_key = agent_config.get("anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    if anthropic_api_key:
+        os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+
+    agent_timeout = float(agent_config.get("agent_timeout", DEFAULT_CODER_TIMEOUT))
+    coder_timeout = agent_timeout
+    reviewer_timeout = agent_timeout / 2
     runtime = project_runtime_paths(root, args.project)
     runtime.db_path.parent.mkdir(parents=True, exist_ok=True)
     tracker = Tracker(runtime.db_path)
@@ -260,11 +299,12 @@ def main(argv: list[str] | None = None) -> int:
         projects_root=root / "projects",
         tasks_root=root / "tasks",
         worktrees_root=runtime.worktrees_path,
-        coder_role=args.coder_role,
+        coder_role=coder_role,
         reviewer_role=args.reviewer_role,
         task_filter=args.task,
         max_attempts=args.max_attempts,
-        coder_timeout=args.coder_timeout,
+        coder_timeout=coder_timeout,
+        reviewer_timeout=reviewer_timeout,
     )
     emit_event(runtime.events_path, task_id=None, actor="orchestrator", type="startup")
     if args.watch:

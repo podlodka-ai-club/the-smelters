@@ -457,9 +457,10 @@ async def run_android_coder_agent(task_id: int) -> int:
     inactivity_timeout = config.get("agent_inactivity_timeout", 600)
 
     if implementation == "gemini":
-        gemini_api_key = config.get("gemini_api_key", "")
+        gemini_api_key = config.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
         if gemini_api_key:
             os.environ["GEMINI_API_KEY"] = gemini_api_key
+            os.environ["GOOGLE_GENERATIVE_AI_API_KEY"] = gemini_api_key
         
         gemini_model = config.get("gemini_model", "google/gemini-2.5-flash")
         opencode_provider = f"opencode/{gemini_model}"
@@ -469,14 +470,11 @@ async def run_android_coder_agent(task_id: int) -> int:
         prompt_file_abs.write_text(full_prompt)
         opencode_message = "Implement the task exactly as described in the attached prompt file."
         
-        cmd = [
-            "opencode", "run",
-            "--model", gemini_model,
-            "--attach", "http://localhost:4096",
-            "--dir", str(task_worktree),
-            opencode_message,
-            "--file", str(prompt_file_abs),
-        ]
+        server_url = config.get("opencode_server_url", "")
+        cmd = ["opencode", "run", "--model", gemini_model]
+        if server_url:
+            cmd += ["--attach", server_url]
+        cmd += ["--dir", str(task_worktree), opencode_message, "--file", str(prompt_file_abs)]
         
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
         print(f"INFO: Working directory: {task_worktree}", file=sys.stderr)

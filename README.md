@@ -1,9 +1,17 @@
 # Multi-Agent Dev Assistant
 
-This repository contains the orchestration layer for a two-agent development system built on the Claude Agent SDK. The root project does not implement product logic itself; it manages tasks, routes them to the correct repository in `projects/`, and tracks execution.
+This repository contains the orchestration layer for a multi-agent development system. It manages tasks, routes them to the correct repository in `projects/`, and tracks execution.
+
+The project ships **two independent pipelines** that solve the same problem with different trade-offs:
+
+1. **Custom orchestrator** (`orchestrator.py`) — a hand-rolled task loop that drives Claude-SDK agents in `agents/` directly. Simple coder → reviewer loop with retry on rejection.
+2. **Agno orchestrator** (`agno_orchestrator.py`) — a richer multi-step pipeline built on the [Agno](https://github.com/agno-agi/agno) framework using agents in `agno_agents/`. Designed for Android TDD: test_writer → impl → lint_fix → test_run → checker, with optional human-review gates.
+
+Both pipelines share constants, prompts, and helper utilities under `shared/`. See [Two Pipelines](#two-pipelines) below for when to use which.
 
 ## Table Of Contents
 
+- [Two Pipelines](#two-pipelines)
 - [What Is Here](#what-is-here)
 - [Pipeline](#pipeline)
 - [Scripts And Modules](#scripts-and-modules)
@@ -14,6 +22,21 @@ This repository contains the orchestration layer for a two-agent development sys
 - [Getting Started](#getting-started)
 - [Adding A New Project](#adding-a-new-project)
 - [How To Verify The System](#how-to-verify-the-system)
+
+## Two Pipelines
+
+| | `orchestrator.py` (custom) | `agno_orchestrator.py` (Agno) |
+|---|---|---|
+| **Framework** | None — direct subprocess + Claude Agent SDK | [Agno](https://github.com/agno-agi/agno) framework (its `Workflow` engine) |
+| **Agents** | `agents/coder.py`, `agents/reviewer.py`, `agents/code_checker.py`, `agents/android_coder.py` | `agno_agents/test_writer_agent.py`, `agno_agents/impl_agent.py`, `agno_agents/lint_fix_agent.py`, `agno_agents/test_run_agent.py`, `agno_agents/code_checker.py`, `agno_agents/android_coder.py` |
+| **Steps** | coder → reviewer (loop on reject, configurable max attempts) | test_writer → impl → lint_fix → test_run → checker (with conditional retries) |
+| **State** | SQLite (`database/<project>/tasks.db`) + JSONL events | Agno session state + ephemeral SQLite for metrics |
+| **Scope** | One task at a time, project-agnostic (Python, Android, generic) | Single Android TDD target class at a time |
+| **Backends** | Claude (Anthropic SDK) or Gemini (via `opencode` CLI) | Claude or Gemini via Agno's model adapters |
+| **Human review** | Not built-in (orchestrator runs to completion) | Optional human-review gates between steps (`--auto` disables) |
+| **Use when** | You have many independent tasks queued in the tracker DB and want autonomous batch processing. | You're doing TDD on a specific Android class and want fine-grained step control. |
+
+Both pipelines coexist; pick whichever fits the workload. Shared system prompts (`shared/prompts.py`), validation utilities (`shared/checker_utils.py`), constants (`shared/constants.py`), and SDK helpers (`shared/agent_base.py`) keep them aligned.
 
 ## What Is Here
 
@@ -30,6 +53,8 @@ After cloning this repository, `projects/python_fixture/` is ready to use as a n
 
 ## Pipeline
 
+### Custom orchestrator (`orchestrator.py`)
+
 ```text
 tasks/<project>/*.md
   -> seed.py --project <project>
@@ -37,7 +62,7 @@ tasks/<project>/*.md
   -> orchestrator.py --project <project>
   -> projects/<project>
   -> worktrees/<project>/task-N
-  -> agents/coder.py
+  -> agents/coder.py  (or agents/android_coder.py for Android projects)
   -> agents/reviewer.py
   -> database/<project>/events.jsonl
   -> printer.py --project <project> / tui.py --project <project>
@@ -45,31 +70,84 @@ tasks/<project>/*.md
 
 1. `seed.py --project <name>` reads `tasks/<project>/*.md`, extracts `Project: ...`, validates `projects/<name>` exists, parses the task number from the filename, and inserts tasks into `database/<project>/tasks.db`.
 2. `orchestrator.py --project <name>` claims the next ready task from that project's database, copies `projects/<project>/` into a task sandbox, and initializes a temporary git repo there for diffing and review.
-3. `agents/coder.py` works inside that worktree and applies the requested fix.
+3. `agents/coder.py` (or `agents/android_coder.py`) works inside that worktree and applies the requested fix.
 4. `agents/reviewer.py` verifies the change and approves or rejects it.
 5. `src/tracker.py` persists state transitions, while `src/events.py` writes the project-local event log consumed by `printer.py` and `tui.py`.
 
+### Agno orchestrator (`agno_orchestrator.py`)
+
+```text
+tasks/<Project>/<task>.md
+  -> agno_orchestrator.py --task <path-to-task.md>
+  -> agno_agents/test_writer_agent.py     (write failing test)
+  -> agno_agents/impl_agent.py            (implement to pass test)
+  -> agno_agents/lint_fix_agent.py        (loop until lint clean)
+  -> agno_agents/test_run_agent.py        (run tests in real Gradle)
+  -> agno_agents/code_checker.py          (final verification)
+```
+
+Run directly against a task spec, no tracker DB or seed step required:
+
+```bash
+.venv/bin/python agno_orchestrator.py --task tasks/DemoApp/007-favorites-vm.md --auto
+```
+
+The orchestrator parses `**Module:**`, `**Package:**`, `**Class:**` headers from the task markdown, derives the matching test/impl file paths under the Gradle module, and walks each agent step with conditional retries (lint fails → re-run lint_fix; tests fail → re-run impl). The `--auto` flag bypasses Agno's human-review gates so it runs unattended.
+
 ## Scripts And Modules
 
+Top-level entrypoints:
+
 - `seed.py`: load Markdown tasks into SQLite.
-- `orchestrator.py`: main task loop and retry logic.
+- `orchestrator.py`: custom task loop with retry logic (uses `agents/`).
+- `agno_orchestrator.py`: Agno-based multi-step orchestrator (uses `agno_agents/`).
 - `printer.py`: plain terminal event stream.
 - `tui.py`: Textual dashboard for live monitoring.
-- `agents/runner.py`: subprocess wrapper for coder/reviewer agents.
-- `agents/fake_coder.py`, `agents/fake_reviewer.py`: deterministic test doubles used in automated tests.
+
+Custom-orchestrator agents (`agents/`):
+
+- `agents/runner.py`: subprocess wrapper that launches an agent role as `python -m agents.<role> <task_id>` (or any dotted module path).
+- `agents/coder.py`, `agents/reviewer.py`: generic Claude-SDK coder/reviewer.
+- `agents/android_coder.py`, `agents/code_checker.py`: Android-specialized variants.
+
+Agno-orchestrator agents (`agno_agents/`):
+
+- `agno_agents/test_writer_agent.py`: writes the failing test for a class spec.
+- `agno_agents/impl_agent.py`: implements the class to make the test pass.
+- `agno_agents/lint_fix_agent.py`: fixes detekt/ktlint violations.
+- `agno_agents/test_run_agent.py`: runs the Gradle test task and reports results.
+- `agno_agents/code_checker.py`, `agno_agents/android_coder.py`: Agno wrappers for the same roles as in `agents/`.
+
+Shared modules (`shared/`):
+
+- `shared/agent_base.py`: config loading, Claude SDK message helpers, Gemini/`opencode` subprocess runner, bash deny-list permission factory.
+- `shared/checker_utils.py`: JSON validation/clamping for code-checker output.
+- `shared/constants.py`: bash deny patterns, timeout and size caps.
+- `shared/prompts.py`: canonical system prompts (used by both pipelines).
+
+Other:
+
 - `src/project_profile.py`: detects whether a target repo looks like Python, Android/Gradle, or generic.
 - `src/worktree.py`: task sandbox creation and cleanup.
+- `tests/fixtures/fake_coder.py`, `tests/fixtures/fake_reviewer.py`: deterministic test doubles used by the test suite.
 
 ## Supported Agents
 
-The orchestrator currently supports 4 agent roles:
+The custom orchestrator currently supports these agent roles:
 
 - `coder`: the real implementation agent powered by the Claude Agent SDK. It edits code inside the task worktree and runs project verification commands.
 - `reviewer`: the real review agent powered by the Claude Agent SDK. It checks verification results and inspects the diff before approving or rejecting a task.
-- `fake_coder`: a deterministic test double used in automated tests and dry-runs. It simulates success, crash, or timeout without calling an external API.
-- `fake_reviewer`: a deterministic test double used in automated tests and dry-runs. It simulates approval, rejection, malformed output, or retry flows.
+- `android_coder`: Android-specialized coder with Gradle-aware system prompt and `RUN_TESTS.sh` generation. Auto-selected by `orchestrator.py` when `src/project_profile.py` detects an Android Gradle project.
+- `code_checker`: read-and-execute verification agent that runs `RUN_TESTS.sh`, parses Gradle/JUnit output, and emits a strict JSON report.
 
-In normal usage, `orchestrator.py` runs `coder` and `reviewer`. In tests, the suite often swaps them for `fake_coder` and `fake_reviewer` to verify orchestration logic without network calls.
+The Agno orchestrator uses its own set of agents (`test_writer_agent`, `impl_agent`, `lint_fix_agent`, `test_run_agent`) chained by `agno_orchestrator.py`, plus shared roles like `code_checker` and `android_coder`.
+
+For tests, deterministic doubles live under `tests/fixtures/`:
+
+- `tests.fixtures.fake_coder`: simulates success, crash, or timeout without calling an external API.
+- `tests.fixtures.fake_reviewer`: simulates approval, rejection, malformed output, or retry flows.
+
+The runner accepts any dotted module path as a role, so tests pass `coder_role="tests.fixtures.fake_coder"` to swap in fakes without network calls.
 
 ## Adding A New Agent Provider
 

@@ -427,7 +427,7 @@ def main() -> None:
         action="store_true",
         help=(
             "Run unattended — drop human-review gates (class mode only). "
-            "If LintLoop or TestLoop hits its 3-iteration cap, the workflow finishes anyway "
+            "If LintLoop or TestLoop hits its 3-iteration cap, the orchestrator finishes anyway "
             "(read the log to see whether LINT_OK / TESTS_OK was actually reached)."
         ),
     )

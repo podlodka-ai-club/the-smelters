@@ -26,7 +26,7 @@ def _task(task_id: int = 1, worktree: str = ".") -> Task:
 @pytest.mark.asyncio
 async def test_runner_reads_final_json_from_fake_coder(tmp_events) -> None:
     os.environ["FAKE_CODER"] = "ok"
-    result = await run_agent(role="fake_coder", task=_task(), events_path=tmp_events, timeout=10)
+    result = await run_agent(role="tests.fixtures.fake_coder", task=_task(), events_path=tmp_events, timeout=10)
     assert result.exit_code == 0
     payload = json.loads(result.stdout_final)
     assert payload["ok"] is True
@@ -35,7 +35,7 @@ async def test_runner_reads_final_json_from_fake_coder(tmp_events) -> None:
 @pytest.mark.asyncio
 async def test_runner_surfaces_nonzero_exit(tmp_events) -> None:
     os.environ["FAKE_CODER"] = "crash"
-    result = await run_agent(role="fake_coder", task=_task(), events_path=tmp_events, timeout=10)
+    result = await run_agent(role="tests.fixtures.fake_coder", task=_task(), events_path=tmp_events, timeout=10)
     assert result.exit_code == 1
     assert result.error is not None
 
@@ -43,6 +43,6 @@ async def test_runner_surfaces_nonzero_exit(tmp_events) -> None:
 @pytest.mark.asyncio
 async def test_runner_enforces_timeout(tmp_events) -> None:
     os.environ["FAKE_CODER"] = "timeout"
-    result = await run_agent(role="fake_coder", task=_task(), events_path=tmp_events, timeout=1)
+    result = await run_agent(role="tests.fixtures.fake_coder", task=_task(), events_path=tmp_events, timeout=1)
     assert result.exit_code != 0
     assert "timeout" in (result.error or "").lower()

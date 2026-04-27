@@ -1,4 +1,4 @@
-"""Fake Coder: no LLM, deterministic from env var FAKE_CODER."""
+"""Fake Coder: no LLM, deterministic from env var FAKE_CODER. Used by tests only."""
 from __future__ import annotations
 
 import json

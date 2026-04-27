@@ -1,4 +1,4 @@
-"""Fake Reviewer: no LLM, deterministic from env var FAKE_REVIEWER."""
+"""Fake Reviewer: no LLM, deterministic from env var FAKE_REVIEWER. Used by tests only."""
 from __future__ import annotations
 
 import hashlib

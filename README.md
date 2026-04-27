@@ -342,6 +342,58 @@ sqlite3 database/<Project>/tasks.db \
 
 Then re-run the orchestrator normally.
 
+### All ways to run a single task (example: task 10, project DemoApp)
+
+**Reset before each run** (if task is already `closed` or `failed`):
+```bash
+sqlite3 database/DemoApp/tasks.db \
+  "UPDATE tasks SET status='ready', attempts=0, review_notes=NULL WHERE task_number=10"
+```
+
+**Regular orchestrator — all backend combinations:**
+```bash
+# Claude subscription (no key needed)
+.venv/bin/python orchestrator.py --project DemoApp --task 10 --coder claude-cli --checker claude-cli
+
+# Gemini for both (needs GEMINI_API_KEY)
+.venv/bin/python orchestrator.py --project DemoApp --task 10 --coder gemini --checker gemini
+
+# Gemini codes, Claude reviews
+.venv/bin/python orchestrator.py --project DemoApp --task 10 --coder gemini --checker claude-cli
+
+# Claude codes, Gemini reviews
+.venv/bin/python orchestrator.py --project DemoApp --task 10 --coder claude-cli --checker gemini
+
+# Gemini with a specific model
+.venv/bin/python orchestrator.py --project DemoApp --task 10 \
+  --coder gemini --coder-model google/gemini-2.5-flash --checker claude-cli
+```
+
+**Agno orchestrator — all backend combinations:**
+```bash
+# Claude subscription (no key needed)
+.venv/bin/python agno_orchestrator.py \
+  --task tasks/DemoApp/10-gifloadresult-getornull.md \
+  --coder claude-cli --checker claude-cli --auto
+
+# Gemini for both (needs GOOGLE_API_KEY)
+.venv/bin/python agno_orchestrator.py \
+  --task tasks/DemoApp/10-gifloadresult-getornull.md \
+  --coder gemini --checker gemini --auto
+
+# Gemini codes, Claude reviews
+.venv/bin/python agno_orchestrator.py \
+  --task tasks/DemoApp/10-gifloadresult-getornull.md \
+  --coder gemini --checker claude-cli --auto
+
+# Claude codes, Gemini reviews
+.venv/bin/python agno_orchestrator.py \
+  --task tasks/DemoApp/10-gifloadresult-getornull.md \
+  --coder claude-cli --checker gemini --auto
+```
+
+> Note: Agno reads `GOOGLE_API_KEY`; the regular orchestrator reads `GEMINI_API_KEY` (or `gemini_api_key` in `agent_config.yml`).
+
 ## Getting Started
 
 ```bash

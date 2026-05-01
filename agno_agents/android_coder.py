@@ -15,7 +15,6 @@ Tooling (agno tool API):
   IMPORTANT: pass commands as ONE STRING, e.g. `bash("ls -R domain/gifs")`, NOT as a list.
 - `read_file`, `save_file`, `list_files`, `search_files`, `search_content` for file ops.
   Paths are relative to the project root.
-
 """
 
 

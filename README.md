@@ -14,6 +14,7 @@ Both pipelines share constants, prompts, and helper utilities under `shared/`. S
 - [Two Pipelines](#two-pipelines)
 - [What Is Here](#what-is-here)
 - [Pipeline](#pipeline)
+- [Agno Workflow (alternate orchestrator)](#agno-workflow-alternate-orchestrator)
 - [Scripts And Modules](#scripts-and-modules)
 - [Supported Agents](#supported-agents)
 - [Adding A New Agent Provider](#adding-a-new-agent-provider)
@@ -94,6 +95,75 @@ Run directly against a task spec, no tracker DB or seed step required:
 ```
 
 The orchestrator parses `**Module:**`, `**Package:**`, `**Class:**` headers from the task markdown, derives the matching test/impl file paths under the Gradle module, and walks each agent step with conditional retries (lint fails → re-run lint_fix; tests fail → re-run impl). The `--auto` flag bypasses Agno's human-review gates so it runs unattended.
+
+## Agno Workflow (alternate orchestrator)
+
+`agno_orchestrator.py` is a second orchestrator built on the [Agno](https://github.com/agno-agi/agno) workflow runtime. It runs the same `tasks/<project>/*.md` specs but bypasses `seed.py` / `tracker.py` / `worktrees/` — it operates directly on `projects/<project>/` and persists workflow state in its own SQLite. Use it when you want a streamed step view with rich live progress, retry-on-API-error resilience, and resume-from-last-step on crash.
+
+Two task formats are auto-detected from the `.md` file:
+
+- **smelters mode** — file starts with `Project: <Name>`. Open-ended PRD. The workflow runs `AndroidCoder ⇄ CodeChecker` in a loop: coder writes tests, implementation, and `RUN_TESTS.sh`; checker runs the script, parses Gradle XML reports, and emits a JSON verdict. On `failed`, the verdict (plus a diff of what the previous iteration changed) is fed back to the coder. Loop ends on `passed` or after `MAX_FIX_ITERATIONS` (default 4).
+- **class mode** — file has `**Module:**` / `**Package:**` / `**Class:**` headers. Single-class TDD: `TestCase → TestWriter → Impl → LintLoop(detekt) → TestLoop(:module:test)`. Use `--auto` to drop human-review gates.
+
+### Feedback loop, iteration cap, and resilience (smelters mode)
+
+- **Cyclic state machine.** `Loop(steps=[coder, checker, diff_tracker], end_condition=_checker_passed, max_iterations=4)`. The `diff_tracker` step uses `git stash create` to snapshot the worktree each iteration, so the next coder iteration receives a `PREVIOUS_ITERATION_DIFF` block describing exactly what its prior attempt changed. This prevents code thrashing where the coder keeps reverting useful edits.
+- **Iteration cap.** Default `MAX_FIX_ITERATIONS = 4` (override with `--max-iterations N`). When the cap is hit without a passing verdict, an event of type `task_aborted` with `reason="MAX_FIX_ITERATIONS_REACHED"` is emitted.
+- **Resume from SQLite.** When `--task-id <N>` is set, the Agno session is keyed as `task-<N>` and persisted at `database/<Project>/agno-session.sqlite`. If the run crashes (network blip, OOM, kill), re-running the same command resumes from the last cached step result instead of starting from iteration 1.
+- **Retry/backoff on transient API errors.** The runner catches transient exceptions (rate limits, 502/503/504, timeouts, connection drops) and retries up to 3 times with exponential backoff (2s, 4s, 8s) before surfacing. Each catch emits an `agent_error_caught` event.
+
+### Events (mappable to TUI)
+
+When `--task-id` is set, structured events are appended to `events.jsonl` (default `database/<Project>/events.jsonl`, override with `--events-path` or `$EVENTS_PATH`). The Agno-specific event types:
+
+| `actor` | `type` | fields |
+|---|---|---|
+| `orchestrator` | `loop_iteration` | `iteration`, `max` |
+| `orchestrator` | `task_aborted` | `reason="MAX_FIX_ITERATIONS_REACHED"`, `iterations`, `max` |
+| `orchestrator` | `agent_error_caught` | `error`, `attempt` |
+
+These share the `events.jsonl` shape used by `printer.py` and `tui.py`, so live monitoring works the same way:
+
+```bash
+.venv/bin/python tui.py --project DemoApp
+```
+
+### Backends
+
+- **coder**: `claude-cli` (default, uses Claude Code subscription/auth and bundled tools), `claude` (Anthropic API + Sonnet 4.6), `gemini` (Gemini 3.1 Pro Preview).
+- **checker**: `claude-cli` (default), `gemini`.
+
+`claude-cli` requires only that the `claude` binary be on `$PATH` (or `$CLAUDE_BIN` set). `claude` needs `ANTHROPIC_API_KEY`. `gemini` needs `GOOGLE_API_KEY`.
+
+### Running
+
+Smoke-run a smelters task with all the new features (events + resume + diff tracking + retry):
+
+```bash
+uv run --frozen -- python agno_orchestrator.py \
+  --task tasks/DemoApp/10-gifloadresult-getornull.md \
+  --task-id 10
+```
+
+Watch events live in another terminal:
+
+```bash
+tail -f database/DemoApp/events.jsonl
+```
+
+Other useful flags:
+
+- `--coder gemini --checker gemini` — fully Gemini-backed.
+- `--coder claude --checker claude-cli` — Anthropic API for coder, Claude CLI for checker.
+- `--max-iterations 6` — bump the loop cap.
+- `--events-path /tmp/run.jsonl` — write events somewhere other than the default.
+- `--auto` (class mode only) — skip human-review gates after lint/test loops cap out.
+
+A clean re-run without resuming the prior session:
+
+```bash
+rm -f database/DemoApp/agno-session.sqlite database/DemoApp/events.jsonl
+```
 
 ## Scripts And Modules
 

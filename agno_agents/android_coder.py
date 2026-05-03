@@ -42,7 +42,12 @@ def make_android_coder(project_path: str, task_content: str, model: str = "claud
     if model == "claude":
         llm = Claude(id="claude-sonnet-4-6", max_tokens=16000)
     elif model == "gemini":
-        llm = Gemini(id="gemini-3.1-pro-preview-customtools")
+        llm = Gemini(
+            id="gemini-2.5-flash",
+            timeout=180.0,
+            retries=1,
+            delay_between_retries=1,
+        )
     else:
         raise ValueError(f"unknown coder model: {model!r} (expected 'claude' or 'gemini')")
     return Agent(
@@ -53,5 +58,6 @@ def make_android_coder(project_path: str, task_content: str, model: str = "claud
             BashTool(base_dir=project, default_timeout=300),
         ],
         instructions=_build_instructions(task_content),
+        tool_call_limit=40,
         markdown=False,
     )

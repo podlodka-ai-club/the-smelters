@@ -23,11 +23,17 @@ def make_code_checker(project_path: str) -> Agent:
     project = Path(project_path).resolve()
     return Agent(
         name="CodeChecker",
-        model=Gemini(id="gemini-3.1-pro-preview-customtools"),
+        model=Gemini(
+            id="gemini-2.5-flash",
+            timeout=180.0,
+            retries=1,
+            delay_between_retries=1,
+        ),
         tools=[
             FileTools(base_dir=project),
             BashTool(base_dir=project, default_timeout=600),
         ],
         instructions=_INSTRUCTIONS,
+        tool_call_limit=20,
         markdown=False,
     )

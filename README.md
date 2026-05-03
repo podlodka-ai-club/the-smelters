@@ -5,7 +5,7 @@ This repository contains the orchestration layer for a multi-agent development s
 The project ships **two independent pipelines** that solve the same problem with different trade-offs:
 
 1. **Custom orchestrator** (`orchestrator.py`) — a hand-rolled task loop that drives Claude-SDK agents in `agents/` directly. Simple coder → reviewer loop with retry on rejection.
-2. **Agno orchestrator** (`agno_orchestrator.py`) — a richer multi-step pipeline built on the [Agno](https://github.com/agno-agi/agno) framework using agents in `agno_agents/`. Designed for Android TDD: test_writer → impl → lint_fix → test_run → checker, with optional human-review gates.
+2. **Agno orchestrator** (`agno_orchestrator.py`) — a richer multi-step pipeline built on the [Agno](https://github.com/agno-agi/agno) framework using agents in `agno_agents/`. Supports class-mode Android TDD and smelters-mode checker→PR→review automation.
 
 Both pipelines share constants, prompts, and helper utilities under `shared/`. See [Two Pipelines](#two-pipelines) below for when to use which.
 
@@ -30,7 +30,7 @@ Both pipelines share constants, prompts, and helper utilities under `shared/`. S
 |---|---|---|
 | **Framework** | None — direct subprocess + Claude Agent SDK | [Agno](https://github.com/agno-agi/agno) framework (its `Workflow` engine) |
 | **Agents** | `agents/coder.py`, `agents/reviewer.py`, `agents/code_checker.py`, `agents/android_coder.py` | `agno_agents/test_writer_agent.py`, `agno_agents/impl_agent.py`, `agno_agents/lint_fix_agent.py`, `agno_agents/test_run_agent.py`, `agno_agents/code_checker.py`, `agno_agents/android_coder.py` |
-| **Steps** | coder → reviewer (loop on reject, configurable max attempts) | test_writer → impl → lint_fix → test_run → checker (with conditional retries) |
+| **Steps** | coder → reviewer (loop on reject, configurable max attempts) | class mode: test_writer → impl → lint_fix → test_run; smelters mode: coder → checker → create PR → local reviewer → PR comment |
 | **State** | SQLite (`database/<project>/tasks.db`) + JSONL events | Agno session state + ephemeral SQLite for metrics |
 | **Scope** | One task at a time, project-agnostic (Python, Android, generic) | Single Android TDD target class at a time |
 | **Backends** | Claude (Anthropic SDK) or Gemini (via `opencode` CLI) | Claude or Gemini via Agno's model adapters |
@@ -80,11 +80,16 @@ tasks/<project>/*.md
 ```text
 tasks/<Project>/<task>.md
   -> agno_orchestrator.py --task <path-to-task.md>
-  -> agno_agents/test_writer_agent.py     (write failing test)
-  -> agno_agents/impl_agent.py            (implement to pass test)
-  -> agno_agents/lint_fix_agent.py        (loop until lint clean)
-  -> agno_agents/test_run_agent.py        (run tests in real Gradle)
-  -> agno_agents/code_checker.py          (final verification)
+  -> class mode:
+       agno_agents/test_writer_agent.py   (write failing test)
+       agno_agents/impl_agent.py          (implement to pass test)
+       agno_agents/lint_fix_agent.py      (loop until lint clean)
+       agno_agents/test_run_agent.py      (run tests in real Gradle)
+  -> smelters mode:
+       coder -> checker
+       agno_tools/pr_create_step.py       (create/reuse PR)
+       agno_tools/pr_reviewer_step.py     (local reviewer with task context)
+       agno_tools/pr_comment_publisher.py (publish/update PR comment)
 ```
 
 Run directly against a task spec, no tracker DB or seed step required:
@@ -94,6 +99,8 @@ Run directly against a task spec, no tracker DB or seed step required:
 ```
 
 The orchestrator parses `**Module:**`, `**Package:**`, `**Class:**` headers from the task markdown, derives the matching test/impl file paths under the Gradle module, and walks each agent step with conditional retries (lint fails → re-run lint_fix; tests fail → re-run impl). The `--auto` flag bypasses Agno's human-review gates so it runs unattended.
+
+In smelters mode (`Project: <Name>` task format), the orchestrator runs coder/checker loop first, then on checker success creates or reuses a PR, runs a local reviewer (`--reviewer claude|gemini`) with explicit task context (`--task-context-mode inline|path`), and publishes/upserts a PR comment via `gh api`.
 
 ## Scripts And Modules
 
@@ -294,15 +301,23 @@ If the build still fails with `SDK location not found`, set the variable explici
 export ANDROID_HOME="$HOME/Library/Android/sdk"
 ```
 
-### Choosing backend per run (`--coder` / `--checker`)
+### Choosing backend per run (`--coder` / `--checker` / `--reviewer`)
 
-Both orchestrators accept `--coder` and `--checker` flags that override `agent_config.yml` without editing the file:
+Both orchestrators accept `--coder` and `--checker` flags that override `agent_config.yml` without editing the file. Agno smelters mode also accepts `--reviewer`:
 
 | Flag value | Backend | Auth required |
 |---|---|---|
 | `claude-cli` | `claude_agent_sdk` (Claude Code subscription) | none — uses CLI auth |
 | `claude` | same as `claude-cli` | none |
 | `gemini` | opencode + Gemini | `GOOGLE_GENERATIVE_AI_API_KEY` or `gemini_api_key` in config |
+
+Smelters PR/review flags:
+
+- `--repo owner/name` (required in smelters mode)
+- `--github-token-env GITHUB_TOKEN` (required variable must be set)
+- `--task-context-mode inline|path` (default `inline`)
+- `--reviewer claude|gemini` (default `claude`)
+- optional: `--base-branch`, `--head-branch`, `--pr-title`, `--pr-body-file`
 
 Optional `--coder-model` / `--checker-model` override the model when using `gemini`:
 

@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -54,6 +55,11 @@ from agno_tools.claude_code_step import (
     make_claude_code_coder_step,
     reset_claude_run_costs,
 )
+from agno_tools.pr_comment_publisher import publish_review_comment
+from agno_tools.pr_create_step import make_pr_create_step
+from agno_tools.pr_reviewer_step import make_pr_reviewer_step
+from src.smelters_flow_state import checker_passed_from_content, pr_created_from_state
+from src.smelters_review_context import SmeltersReviewContext, resolve_smelters_review_context
 
 
 @dataclass(frozen=True)
@@ -332,11 +338,81 @@ def _checker_passed(outputs: List[Any]) -> bool:
     return _parse_checker_status(outputs[-1].content or "") == "passed"
 
 
+def _checker_passed_from_step(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    return checker_passed_from_content(step_input.previous_step_content or "")
+
+
+def _pr_created_from_state(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    return pr_created_from_state(session_state or {})
+
+
+def _run_reviewer_backend(backend: str, prompt: str) -> str:
+    if backend == "claude":
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        return result.stdout
+    if backend == "gemini":
+        cmd = ["opencode", "run", "--model", "google/gemini-2.5-flash", prompt]
+        try:
+            result = subprocess.run(
+                cmd,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            return '{"approved": false, "notes": "gemini reviewer subprocess timed out"}'
+        return result.stdout
+    return '{"approved": false, "notes": "Unsupported reviewer backend"}'
+
+
+def _publish_review_comment_step(
+    context: SmeltersReviewContext,
+):
+    def _step(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> StepOutput:
+        state = session_state or {}
+        pr_payload = state.get("pr_create_result") or {}
+        review_payload = state.get("pr_reviewer_result") or {}
+        pr_number = pr_payload.get("pr_number")
+        if not isinstance(pr_number, int):
+            return StepOutput(content='{"ok": false, "error": "missing PR number for comment publish"}')
+        comment_body = (
+            "## Reviewer result\n"
+            f"- Approved: {review_payload.get('approved')}\n"
+            f"- Notes: {review_payload.get('notes')}\n"
+        )
+        result = publish_review_comment(
+            repo=context.repo,
+            pr_number=pr_number,
+            body=comment_body,
+            token_env_name=context.github_token_env,
+        )
+        payload = {
+            "ok": result.ok,
+            "comment_id": result.comment_id,
+            "action": result.action,
+            "error": result.error,
+        }
+        if session_state is not None:
+            session_state["pr_comment_result"] = payload.copy()
+        return StepOutput(content=json.dumps(payload))
+
+    _step.__name__ = "publish_review_comment_step"
+    return _step
+
+
 def build_smelters_workflow(
     project_path: str,
     task_content: str,
+    review_context: SmeltersReviewContext,
     coder_model: str = "claude",
     checker_backend: str = "gemini",
+    reviewer_backend: str = "claude",
     max_iterations: int = 3,
     coder_claude_model: str = "sonnet",
     checker_claude_model: str = "sonnet",
@@ -386,8 +462,22 @@ def build_smelters_workflow(
         end_condition=_checker_passed,
         forward_iteration_output=True,
     )
+    pr_create_step = make_pr_create_step(review_context)
+    pr_reviewer_step = make_pr_reviewer_step(
+        review_context,
+        backend=reviewer_backend,
+        pr_number=None,
+        pr_url=None,
+        run_backend=_run_reviewer_backend,
+    )
+    comment_step = _publish_review_comment_step(review_context)
 
-    return Workflow(name="AgnoWorkflow", steps=[coder_checker_loop], db=_ephemeral_db())
+    steps = [
+        coder_checker_loop,
+        Condition(steps=[pr_create_step], evaluator=_checker_passed_from_step),
+        Condition(steps=[pr_reviewer_step, comment_step], evaluator=_pr_created_from_state),
+    ]
+    return Workflow(name="AgnoWorkflow", steps=steps, db=_ephemeral_db())
 
 
 def main() -> None:
@@ -478,6 +568,51 @@ def main() -> None:
             "Ignored for --checker gemini."
         ),
     )
+    parser.add_argument(
+        "--reviewer",
+        choices=("claude", "gemini"),
+        default="claude",
+        help="Local reviewer backend in smelters mode (default: claude).",
+    )
+    parser.add_argument(
+        "--repo",
+        default=None,
+        help="GitHub repository slug for PR/review integration in smelters mode (owner/name).",
+    )
+    parser.add_argument(
+        "--base-branch",
+        default="main",
+        help="Base branch for PR creation in smelters mode (default: main).",
+    )
+    parser.add_argument(
+        "--head-branch",
+        default=None,
+        help="Optional head branch for PR creation. If omitted, runtime may infer it.",
+    )
+    parser.add_argument(
+        "--pr-title",
+        default=None,
+        help="Optional override for the PR title created by the smelters flow.",
+    )
+    parser.add_argument(
+        "--pr-body-file",
+        default=None,
+        help="Optional markdown file path used as PR body in smelters mode.",
+    )
+    parser.add_argument(
+        "--github-token-env",
+        default="GITHUB_TOKEN",
+        help="Environment variable name containing GitHub token (default: GITHUB_TOKEN).",
+    )
+    parser.add_argument(
+        "--task-context-mode",
+        choices=("inline", "path"),
+        default="inline",
+        help=(
+            "How task context is passed to reviewer in smelters mode: "
+            "'inline' embeds markdown text, 'path' passes task file path."
+        ),
+    )
     args = parser.parse_args()
 
     task_path = Path(args.task)
@@ -500,6 +635,16 @@ def main() -> None:
         sys.exit(f"ERROR: project not found at {project_path}")
 
     if fmt == "smelters":
+        if not os.environ.get("GOOGLE_API_KEY") and os.environ.get("GEMINI_API_KEY"):
+            os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+
+        review_context = resolve_smelters_review_context(
+            args,
+            task_path=task_path,
+            task_markdown=text,
+            project_path=project_path,
+        )
+
         if args.coder == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
             sys.exit(
                 "ERROR: ANTHROPIC_API_KEY is not set (required for --coder claude / default).\n"
@@ -514,9 +659,11 @@ def main() -> None:
                     "  Install Claude Code or set $CLAUDE_BIN to the binary path."
                 )
         needs_google = args.coder == "gemini" or args.checker == "gemini"
-        if needs_google and not os.environ.get("GOOGLE_API_KEY"):
+        if needs_google and not (
+            os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        ):
             sys.exit(
-                "ERROR: GOOGLE_API_KEY is not set (required for any --coder/--checker gemini).\n"
+                "ERROR: GOOGLE_API_KEY or GEMINI_API_KEY is not set (required for any --coder/--checker gemini).\n"
                 "  Get a key at https://aistudio.google.com/app/apikey, then export GOOGLE_API_KEY=…\n"
                 "  Or pass --coder claude-cli --checker claude-cli to skip Google entirely."
             )
@@ -536,14 +683,22 @@ def main() -> None:
             f"  Project: {project_path}\n"
             f"  Coder:   {coder_label}\n"
             f"  Checker: {checker_label}\n"
+            f"  Repo:    {review_context.repo}\n"
+            f"  PR base: {review_context.base_branch}\n"
+            f"  PR head: {review_context.head_branch or '(infer)'}\n"
+            f"  Token:   ${review_context.github_token_env}\n"
+            f"  Context: {review_context.task_context_mode}\n"
+            f"  Review:  {args.reviewer}\n"
             f"  Loop:    Coder ⇄ Checker, max {args.max_iterations} iterations\n"
         )
 
         workflow = build_smelters_workflow(
             project_path=str(project_path),
             task_content=text,
+            review_context=review_context,
             coder_model=args.coder,
             checker_backend=args.checker,
+            reviewer_backend=args.reviewer,
             max_iterations=args.max_iterations,
             coder_claude_model=args.coder_model,
             checker_claude_model=args.checker_model,

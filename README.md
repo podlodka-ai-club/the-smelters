@@ -100,7 +100,73 @@ Run directly against a task spec, no tracker DB or seed step required:
 
 The orchestrator parses `**Module:**`, `**Package:**`, `**Class:**` headers from the task markdown, derives the matching test/impl file paths under the Gradle module, and walks each agent step with conditional retries (lint fails → re-run lint_fix; tests fail → re-run impl). The `--auto` flag bypasses Agno's human-review gates so it runs unattended.
 
-In smelters mode (`Project: <Name>` task format), the orchestrator runs coder/checker loop first, then on checker success creates or reuses a PR, runs a local reviewer (`--reviewer claude|gemini`) with explicit task context (`--task-context-mode inline|path`), and publishes/upserts a PR comment via `gh api`.
+In smelters mode (`Project: <Name>` task format), the orchestrator runs coder/checker loop first, then on checker success creates or reuses a PR, runs a local reviewer, and publishes/upserts a PR comment via `gh api`. Full **Smelters YAML + CLI reference** is in the next subsection.
+
+### Smelters — YAML keys and CLI parameters (`agno_orchestrator.py`)
+
+**Recommended:** configure backends and opencode models in `agent_config.yml` and **do not** pass `--coder`, `--checker`, or `--reviewer` on the command line. Those three flags exist only to **override** the YAML values for a single run (you can pass one, two, or all three).
+
+**Custom YAML path:** `--agent-config PATH` loads that file. If you omit it, the orchestrator loads the first existing file among `$REPO_ROOT/agent_config.yml` and `./agent_config.yml`; if neither exists, built-in defaults apply (see `shared/agent_base.DEFAULT_CONFIG` and `src/smelters_yaml.py` fallbacks).
+
+**YAML keys for Smelters** (in addition to shared keys like `agent_timeout`, `opencode_server_url`):
+
+| Key | Purpose |
+|-----|---------|
+| `smelters_coder_backend` | `claude` \| `gemini` \| `claude-cli` \| `opencode` |
+| `smelters_checker_backend` | `gemini` \| `claude-cli` \| `opencode` |
+| `smelters_reviewer_backend` | `claude` \| `opencode` |
+| `opencode_coder_model` | `opencode run --model …` when coder backend is `opencode` |
+| `opencode_checker_model` | Same when checker backend is `opencode` |
+| `opencode_reviewer_model` | Same when reviewer backend is `opencode` |
+
+**Smelters-related CLI flags** (all optional except `--task` and, for PR flow, repo/token as noted):
+
+| Flag | Default | Notes |
+|------|---------|--------|
+| `--task` | *(required)* | Path to task `.md` (`Project: …` first line for Smelters). |
+| `--agent-config` | *(omit)* | Explicit path to YAML; else discover `agent_config.yml`. |
+| `--project` | auto | Gradle root; usually `projects/<Name>` from task path. |
+| `--coder` | from YAML | **Override** `smelters_coder_backend` only if needed. |
+| `--checker` | from YAML | **Override** `smelters_checker_backend` only if needed. |
+| `--reviewer` | from YAML | **Override** `smelters_reviewer_backend` only if needed. |
+| `--coder-model` | `sonnet` | Only for `--coder claude-cli` (Claude Code CLI model). |
+| `--checker-model` | `sonnet` | Only for `--checker claude-cli`. |
+| `--max-iterations` | `3` | Coder ⇄ checker loop cap. |
+| `--repo` | *(none)* | **Required in Smelters** for PR create/review: `owner/name`. |
+| `--base-branch` | `main` | PR base branch. |
+| `--head-branch` | inferred | PR head branch if you need to pin it. |
+| `--pr-title` | inferred | PR title override. |
+| `--pr-body-file` | none | Markdown file for PR body (must exist if set). |
+| `--github-token-env` | `GITHUB_TOKEN` | Env var **name** holding the token (var must be set). |
+| `--task-context-mode` | `inline` | `inline` = embed task text in reviewer prompt; `path` = path only. |
+| `--auto` | off | **Class mode only** — not Smelters; drops human-review gates in TDD pipeline. |
+
+Example with **only YAML-driven backends** (no `--coder` / `--checker` / `--reviewer`):
+
+```bash
+export GITHUB_TOKEN=…
+uv run python agno_orchestrator.py \
+  --task tasks/DemoApp/your-task.md \
+  --repo your-org/the-smelters
+```
+
+Example using an alternate config file:
+
+```bash
+uv run python agno_orchestrator.py \
+  --agent-config ./my-agent-config.yml \
+  --task tasks/DemoApp/your-task.md \
+  --repo your-org/the-smelters
+```
+
+Example **overriding only the checker** for one run (coder and reviewer still from YAML):
+
+```bash
+uv run python agno_orchestrator.py \
+  --task tasks/DemoApp/your-task.md \
+  --repo your-org/the-smelters \
+  --checker gemini
+```
 
 ## Scripts And Modules
 
@@ -303,20 +369,21 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 
 ### Choosing backend per run (`--coder` / `--checker` / `--reviewer`)
 
-Both orchestrators accept `--coder` and `--checker` flags that override `agent_config.yml` without editing the file. Agno smelters mode also accepts `--reviewer`:
+For **`agno_orchestrator.py` Smelters mode**, prefer **YAML-only backends** and use the full flag list in **Smelters — YAML keys and CLI parameters** above. The table below targets the **legacy** `orchestrator.py` / class-style flows; it is not a substitute for the Smelters section.
+
+The legacy orchestrator accepts `--coder` and `--checker` flags that override `agent_config.yml` without editing the file:
 
 | Flag value | Backend | Auth required |
 |---|---|---|
-| `claude-cli` | `claude_agent_sdk` (Claude Code subscription) | none — uses CLI auth |
-| `claude` | same as `claude-cli` | none |
-| `gemini` | opencode + Gemini | `GOOGLE_GENERATIVE_AI_API_KEY` or `gemini_api_key` in config |
+| `claude-cli` | Claude Code CLI | CLI auth |
+| `claude` | Claude SDK path | `ANTHROPIC_API_KEY` |
+| `gemini` | Gemini / opencode per project wiring | Google / opencode auth as configured |
 
-Smelters PR/review flags:
+Smelters PR/review flags (also documented in the Smelters subsection):
 
 - `--repo owner/name` (required in smelters mode)
 - `--github-token-env GITHUB_TOKEN` (required variable must be set)
 - `--task-context-mode inline|path` (default `inline`)
-- `--reviewer claude|gemini` (default `claude`)
 - optional: `--base-branch`, `--head-branch`, `--pr-title`, `--pr-body-file`
 
 Optional `--coder-model` / `--checker-model` override the model when using `gemini`:

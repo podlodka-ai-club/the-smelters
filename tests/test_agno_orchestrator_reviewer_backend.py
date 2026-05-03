@@ -7,8 +7,10 @@ import subprocess
 import pytest
 
 
-def test_make_run_reviewer_backend_gemini_uses_configured_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agno_orchestrator import make_run_reviewer_backend
+def test_make_run_reviewer_backend_opencode_uses_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.smelters_reviewer_backend import make_run_reviewer_backend
 
     recorded: dict[str, object] = {}
 
@@ -16,14 +18,14 @@ def test_make_run_reviewer_backend_gemini_uses_configured_model(monkeypatch: pyt
         recorded["cmd"] = cmd
         return subprocess.CompletedProcess(cmd, 0, stdout='{"approved": true, "notes": "ok"}', stderr="")
 
-    monkeypatch.setattr("agno_orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("src.smelters_reviewer_backend.subprocess.run", fake_run)
 
     run = make_run_reviewer_backend(
         "opencode/nemotron-3-super-free",
         opencode_server_url="",
         timeout_secs=120.0,
     )
-    out = run("gemini", "prompt text")
+    out = run("opencode", "prompt text")
 
     assert out.strip().startswith("{")
     cmd = recorded["cmd"]
@@ -32,8 +34,8 @@ def test_make_run_reviewer_backend_gemini_uses_configured_model(monkeypatch: pyt
     assert cmd[-1] == "prompt text"
 
 
-def test_make_run_reviewer_backend_gemini_attaches_server(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agno_orchestrator import make_run_reviewer_backend
+def test_make_run_reviewer_backend_opencode_attaches_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.smelters_reviewer_backend import make_run_reviewer_backend
 
     recorded: dict[str, object] = {}
 
@@ -41,13 +43,13 @@ def test_make_run_reviewer_backend_gemini_attaches_server(monkeypatch: pytest.Mo
         recorded["cmd"] = cmd
         return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
 
-    monkeypatch.setattr("agno_orchestrator.subprocess.run", fake_run)
+    monkeypatch.setattr("src.smelters_reviewer_backend.subprocess.run", fake_run)
 
     run = make_run_reviewer_backend(
         "opencode/nemotron-3-super-free",
         opencode_server_url="http://127.0.0.1:4096",
     )
-    run("gemini", "x")
+    run("opencode", "x")
 
     cmd = recorded["cmd"]
     assert "--attach" in cmd

@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.db.sqlite import SqliteDb
 from agno.workflow import Workflow
@@ -61,6 +61,12 @@ from agno_tools.pr_reviewer_step import make_pr_reviewer_step
 from shared.agent_base import load_config
 from src.smelters_flow_state import checker_passed_from_content, pr_created_from_state
 from src.smelters_review_context import SmeltersReviewContext, resolve_smelters_review_context
+from src.smelters_reviewer_backend import make_run_reviewer_backend
+from src.smelters_yaml import (
+    merge_cli_backend_overrides,
+    resolve_agent_config_path,
+    resolve_smelters_backends_from_yaml,
+)
 
 
 @dataclass(frozen=True)
@@ -347,44 +353,6 @@ def _pr_created_from_state(step_input: StepInput, session_state: Optional[Dict[s
     return pr_created_from_state(session_state or {})
 
 
-def make_run_reviewer_backend(
-    opencode_reviewer_model: str,
-    *,
-    opencode_server_url: str = "",
-    timeout_secs: float = 300.0,
-) -> Callable[[str, str], str]:
-    """Build reviewer runner; ``gemini`` backend uses ``opencode run`` with ``opencode_reviewer_model``."""
-
-    def _run_reviewer_backend(backend: str, prompt: str) -> str:
-        if backend == "claude":
-            result = subprocess.run(
-                ["claude", "-p", prompt],
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            return result.stdout
-        if backend == "gemini":
-            cmd: List[str] = ["opencode", "run", "--model", opencode_reviewer_model]
-            if opencode_server_url.strip():
-                cmd.extend(["--attach", opencode_server_url.strip()])
-            cmd.append(prompt)
-            try:
-                result = subprocess.run(
-                    cmd,
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                    timeout=timeout_secs,
-                )
-            except subprocess.TimeoutExpired:
-                return '{"approved": false, "notes": "gemini reviewer subprocess timed out"}'
-            return result.stdout
-        return '{"approved": false, "notes": "Unsupported reviewer backend"}'
-
-    return _run_reviewer_backend
-
-
 def _publish_review_comment_step(
     context: SmeltersReviewContext,
 ):
@@ -432,6 +400,7 @@ def build_smelters_workflow(
     checker_claude_model: str = "sonnet",
     *,
     opencode_coder_model: str = "opencode/minimax-m2.5-free",
+    opencode_checker_model: str = "opencode/ling-2.6-flash-free",
     opencode_reviewer_model: str = "opencode/nemotron-3-super-free",
     opencode_server_url: str = "",
     agent_timeout_secs: float = 7200.0,
@@ -442,11 +411,12 @@ def build_smelters_workflow(
     Args:
         coder_model: coder backend:
           - "claude":     Agno Agent on Claude Sonnet 4.6 (needs ANTHROPIC_API_KEY)
-          - "gemini":     Agno Agent on Gemini 3.1 Pro Preview (needs GOOGLE_API_KEY)
+          - "gemini":     Agno Agent on Gemini 2.5 Flash (needs GOOGLE_API_KEY)
           - "claude-cli": subprocess to `claude -p` (needs Claude Code logged in)
         checker_backend: checker backend:
-          - "gemini":     Agno Agent on Gemini 3.1 Pro Preview (needs GOOGLE_API_KEY)
+          - "gemini":     Agno Agent on Gemini 2.5 Flash (needs GOOGLE_API_KEY)
           - "claude-cli": subprocess to `claude -p` (needs Claude Code logged in)
+          - "opencode":   `opencode run` with ``opencode_checker_model`` from agent_config.yml
         coder_claude_model: model passed to `claude --model ...` when
             coder_model == 'claude-cli'. Aliases ("sonnet" [default], "opus", "haiku")
             or full IDs ("claude-sonnet-4-6"). Ignored for other backends.
@@ -454,9 +424,10 @@ def build_smelters_workflow(
             is a great cheap pick for the checker phase).
         opencode_coder_model: ``opencode run --model`` id when coder_model == "opencode"
             (default from agent_config.yml).
-        opencode_reviewer_model: ``opencode run --model`` id when reviewer_backend == "gemini".
-        opencode_server_url: optional ``opencode serve`` attach URL for coder/reviewer opencode runs.
-        agent_timeout_secs: max seconds for each opencode coder invocation.
+        opencode_checker_model: ``opencode run --model`` id when checker_backend == "opencode".
+        opencode_reviewer_model: ``opencode run --model`` id when reviewer_backend == "opencode".
+        opencode_server_url: optional ``opencode serve`` attach URL for opencode coder/checker/reviewer.
+        agent_timeout_secs: max seconds for each opencode coder or checker invocation.
     """
     if coder_model == "claude-cli":
         coder_step = make_claude_code_coder_step(
@@ -485,6 +456,15 @@ def build_smelters_workflow(
         checker_step = make_claude_code_checker_step(
             project_path=project_path,
             model_alias=checker_claude_model,
+        )
+    elif checker_backend == "opencode":
+        from agno_tools.opencode_checker_step import make_opencode_checker_step
+
+        checker_step = make_opencode_checker_step(
+            project_path=project_path,
+            model_id=opencode_checker_model,
+            opencode_server_url=opencode_server_url,
+            timeout_secs=agent_timeout_secs,
         )
     else:
         checker_step = make_code_checker(project_path=project_path)
@@ -533,13 +513,23 @@ def main() -> None:
             "              CodeChecker runs RUN_TESTS.sh, parses TEST-*.xml\n"
             "                  ⇣ (if failed → JSON feedback to coder, retry)\n"
             "              done when status==passed or max iterations reached\n"
-            "    Default coder: Claude Sonnet 4.6 (use --coder gemini for cheap fallback).\n"
+            "    Smelters coder/checker/reviewer backends default from agent_config.yml "
+            "(CLI overrides).\n"
             "\n"
             "Class mode (single-class TDD) — task has `**Module/Package/Class:**` headers:\n"
             "    TestCase → TestWriter → Impl → LintLoop(detekt) → TestLoop(:module:test)\n"
             "    Coder/checker on Gemini 2.5 Flash. --auto disables human-review gates."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--agent-config",
+        default=None,
+        metavar="PATH",
+        help=(
+            "YAML config (Smelters backends, opencode model ids, timeouts). "
+            "Default: agent_config.yml under $REPO_ROOT or current directory."
+        ),
     )
     parser.add_argument(
         "--task",
@@ -563,23 +553,24 @@ def main() -> None:
     parser.add_argument(
         "--coder",
         choices=("claude", "gemini", "claude-cli", "opencode"),
-        default="claude",
+        default=None,
         help=(
-            "Coder backend in smelters mode. "
-            "'claude' = Agno+Sonnet 4.6 (default, needs ANTHROPIC_API_KEY). "
+            "Override Smelters coder backend (see agent_config.yml ``smelters_coder_backend``). "
+            "'claude' = Agno+Sonnet 4.6 (needs ANTHROPIC_API_KEY). "
             "'gemini' = Agno+Gemini 2.5 Flash (needs GOOGLE_API_KEY). "
-            "'claude-cli' = subprocess to `claude -p` — uses Claude Code's subscription/auth and bundled tools. "
-            "'opencode' = `opencode run` with agent_config.yml opencode_coder_model (MiniMax free by default)."
+            "'claude-cli' = `claude -p`. "
+            "'opencode' = `opencode run` with ``opencode_coder_model``."
         ),
     )
     parser.add_argument(
         "--checker",
-        choices=("gemini", "claude-cli"),
-        default="gemini",
+        choices=("gemini", "claude-cli", "opencode"),
+        default=None,
         help=(
-            "Checker backend in smelters mode. "
-            "'gemini' = Agno+Gemini 3.1 Pro Preview (default, needs GOOGLE_API_KEY). "
-            "'claude-cli' = subprocess to `claude -p` — uses Claude Code's auth, no Google key needed."
+            "Override Smelters checker backend (see ``smelters_checker_backend``). "
+            "'gemini' = Agno+Gemini 2.5 Flash. "
+            "'claude-cli' = `claude -p`. "
+            "'opencode' = `opencode run` with ``opencode_checker_model``."
         ),
     )
     parser.add_argument(
@@ -595,7 +586,7 @@ def main() -> None:
             "Model for the coder when --coder claude-cli. "
             "Aliases ('sonnet' [default], 'opus', 'haiku' → latest of each family) "
             "or full IDs ('claude-sonnet-4-6', 'claude-opus-4-7'). "
-            "Ignored for --coder claude/gemini."
+            "Ignored for --coder claude/gemini/opencode."
         ),
     )
     parser.add_argument(
@@ -605,14 +596,17 @@ def main() -> None:
             "Model for the checker when --checker claude-cli. "
             "Aliases ('sonnet' [default], 'opus', 'haiku') or full IDs. "
             "'haiku' is a fine cheap pick — checker just runs a script and parses XML. "
-            "Ignored for --checker gemini."
+            "Ignored unless --checker claude-cli (gemini and opencode use their own model selection)."
         ),
     )
     parser.add_argument(
         "--reviewer",
-        choices=("claude", "gemini"),
-        default="claude",
-        help="Local reviewer backend in smelters mode (default: claude).",
+        choices=("claude", "opencode"),
+        default=None,
+        help=(
+            "Override Smelters local reviewer (see ``smelters_reviewer_backend``). "
+            "'opencode' = `opencode run` with ``opencode_reviewer_model``."
+        ),
     )
     parser.add_argument(
         "--repo",
@@ -685,9 +679,22 @@ def main() -> None:
             project_path=project_path,
         )
 
-        agent_cfg = load_config()
+        agent_config_file = resolve_agent_config_path(args.agent_config)
+        agent_cfg = load_config(config_path=agent_config_file)
+        yaml_backends = resolve_smelters_backends_from_yaml(agent_cfg)
+        sm = merge_cli_backend_overrides(
+            yaml_backends,
+            coder_override=args.coder,
+            checker_override=args.checker,
+            reviewer_override=args.reviewer,
+        )
+        coder_backend, checker_backend, reviewer_backend = sm.coder, sm.checker, sm.reviewer
+
         opencode_coder_model = str(
             agent_cfg.get("opencode_coder_model") or "opencode/minimax-m2.5-free"
+        )
+        opencode_checker_model = str(
+            agent_cfg.get("opencode_checker_model") or "opencode/ling-2.6-flash-free"
         )
         opencode_reviewer_model = str(
             agent_cfg.get("opencode_reviewer_model") or "opencode/nemotron-3-super-free"
@@ -695,12 +702,12 @@ def main() -> None:
         opencode_server_url = str(agent_cfg.get("opencode_server_url") or "")
         agent_timeout_secs = float(agent_cfg.get("agent_timeout", 7200))
 
-        if args.coder == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
+        if coder_backend == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
             sys.exit(
-                "ERROR: ANTHROPIC_API_KEY is not set (required for --coder claude / default).\n"
-                "  Set it, or pass --coder gemini / --coder claude-cli / --coder opencode."
+                "ERROR: ANTHROPIC_API_KEY is not set (required when Smelters coder is `claude`).\n"
+                "  Set it, or set ``smelters_coder_backend`` / ``--coder`` to gemini, claude-cli, or opencode."
             )
-        needs_claude_cli = args.coder == "claude-cli" or args.checker == "claude-cli"
+        needs_claude_cli = coder_backend == "claude-cli" or checker_backend == "claude-cli"
         if needs_claude_cli:
             from shutil import which
             if not (which("claude") or os.environ.get("CLAUDE_BIN")):
@@ -708,22 +715,26 @@ def main() -> None:
                     "ERROR: claude CLI not found on PATH (required for any --coder/--checker claude-cli).\n"
                     "  Install Claude Code or set $CLAUDE_BIN to the binary path."
                 )
-        needs_opencode = args.coder == "opencode" or args.reviewer == "gemini"
+        needs_opencode = (
+            coder_backend == "opencode"
+            or checker_backend == "opencode"
+            or reviewer_backend == "opencode"
+        )
         if needs_opencode:
             from shutil import which
             if not which("opencode"):
                 sys.exit(
-                    "ERROR: opencode CLI not found on PATH (required for --coder opencode or --reviewer gemini).\n"
+                    "ERROR: opencode CLI not found on PATH (required when any Smelters role uses opencode).\n"
                     "  Install opencode and ensure it is on PATH."
                 )
-        needs_google = args.coder == "gemini" or args.checker == "gemini"
+        needs_google = coder_backend == "gemini" or checker_backend == "gemini"
         if needs_google and not (
             os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         ):
             sys.exit(
-                "ERROR: GOOGLE_API_KEY or GEMINI_API_KEY is not set (required for any --coder/--checker gemini).\n"
+                "ERROR: GOOGLE_API_KEY or GEMINI_API_KEY is not set (required when coder or checker is `gemini`).\n"
                 "  Get a key at https://aistudio.google.com/app/apikey, then export GOOGLE_API_KEY=…\n"
-                "  Or pass --coder claude-cli --checker claude-cli to skip Google entirely."
+                "  Or switch ``smelters_*_backend`` / CLI flags to opencode or claude-cli."
             )
 
         coder_label = {
@@ -731,16 +742,20 @@ def main() -> None:
             "gemini": "Gemini 2.5 Flash (Agno API)",
             "claude-cli": f"Claude Code CLI (`claude -p --model {args.coder_model}`, subscription auth)",
             "opencode": f"opencode (`opencode run --model {opencode_coder_model}`)",
-        }[args.coder]
+        }[coder_backend]
         checker_label = {
             "gemini": "Gemini 2.5 Flash (Agno API)",
             "claude-cli": f"Claude Code CLI (`claude -p --model {args.checker_model}`, subscription auth)",
-        }[args.checker]
-        review_label = args.reviewer
-        if args.reviewer == "gemini":
-            review_label = f"gemini → opencode ({opencode_reviewer_model})"
+            "opencode": f"opencode (`opencode run --model {opencode_checker_model}`)",
+        }[checker_backend]
+        review_label = (
+            f"opencode (`opencode run --model {opencode_reviewer_model}`)"
+            if reviewer_backend == "opencode"
+            else reviewer_backend
+        )
         print(
             "[AgnoWorkflow]\n"
+            f"  Config:  {agent_config_file}\n"
             f"  Task:    {task_path}\n"
             f"  Project: {project_path}\n"
             f"  Coder:   {coder_label}\n"
@@ -758,13 +773,14 @@ def main() -> None:
             project_path=str(project_path),
             task_content=text,
             review_context=review_context,
-            coder_model=args.coder,
-            checker_backend=args.checker,
-            reviewer_backend=args.reviewer,
+            coder_model=coder_backend,
+            checker_backend=checker_backend,
+            reviewer_backend=reviewer_backend,
             max_iterations=args.max_iterations,
             coder_claude_model=args.coder_model,
             checker_claude_model=args.checker_model,
             opencode_coder_model=opencode_coder_model,
+            opencode_checker_model=opencode_checker_model,
             opencode_reviewer_model=opencode_reviewer_model,
             opencode_server_url=opencode_server_url,
             agent_timeout_secs=agent_timeout_secs,

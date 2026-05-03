@@ -13,9 +13,16 @@ anthropic_api_key: ""
 # Default model for legacy agents/android_coder and shared/agent_base subprocess runs.
 gemini_model: google/gemini-3.1-pro-preview-customtools
 
-# Smelters workflow: separate opencode models so coder and reviewer can differ.
-# Used by agno_orchestrator.py — ``opencode run --model <id>``.
+# Smelters workflow (agno_orchestrator.py): backends when CLI omits --coder/--checker/--reviewer.
+# Override per run with those flags. Values: coder [claude|gemini|claude-cli|opencode],
+# checker [gemini|claude-cli|opencode], reviewer [claude|opencode].
+smelters_coder_backend: opencode
+smelters_checker_backend: opencode
+smelters_reviewer_backend: opencode
+
+# Per-role opencode models (`opencode run --model <id>`) when backend is opencode.
 opencode_coder_model: opencode/minimax-m2.5-free
+opencode_checker_model: opencode/ling-2.6-flash-free
 opencode_reviewer_model: opencode/nemotron-3-super-free
 #
 # Other FREE models available in your current opencode setup:

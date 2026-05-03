@@ -35,7 +35,7 @@ def test_build_reviewer_prompt_includes_inline_task_markdown() -> None:
 
 
 def test_build_reviewer_prompt_path_mode_skips_markdown_body() -> None:
-    request = build_reviewer_request(_context("path"), backend="gemini", pr_number=None, pr_url="https://x/pr/1")
+    request = build_reviewer_request(_context("path"), backend="opencode", pr_number=None, pr_url="https://x/pr/1")
     prompt = build_reviewer_prompt(request)
     assert "Task spec path: tasks/the-smelters/005.md" in prompt
     assert "Task spec markdown:" not in prompt

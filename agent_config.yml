@@ -10,8 +10,13 @@ gemini_api_key: ""
 anthropic_api_key: ""
 
 # Model to use with opencode CLI (provider/model)
-# Default model for android_coder runs.
+# Default model for legacy agents/android_coder and shared/agent_base subprocess runs.
 gemini_model: google/gemini-3.1-pro-preview-customtools
+
+# Smelters workflow: separate opencode models so coder and reviewer can differ.
+# Used by agno_orchestrator.py — ``opencode run --model <id>``.
+opencode_coder_model: opencode/minimax-m2.5-free
+opencode_reviewer_model: opencode/nemotron-3-super-free
 #
 # Other FREE models available in your current opencode setup:
 # - opencode/hy3-preview-free

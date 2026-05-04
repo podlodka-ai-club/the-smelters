@@ -102,6 +102,14 @@ The orchestrator parses `**Module:**`, `**Package:**`, `**Class:**` headers from
 
 In smelters mode (`Project: <Name>` task format), the orchestrator runs coder/checker loop first, then on checker success creates or reuses a PR, runs a local reviewer, and publishes/upserts a PR comment via `gh api`. Full **Smelters YAML + CLI reference** is in the next subsection.
 
+**PR gate (checker JSON, not subprocess exit).** PR creation and the reviewer/comment steps run only after the checker output is accepted as passed (see `checker_passed_from_content` in `src/smelters_flow_state.py`: a JSON object line containing `"status": "passed"`). For the opencode checker, exit code 0 does not imply pass; if the model omits valid contract JSON, the step normalizes the output to `status: failed` so the gate stays closed.
+
+**Whole-flow failure and exit code.** If a run finishes without opening that PR path (for example the coder/checker loop hits `--max-iterations` without a passing checker), the process exits with code 1, prints an `SMELTERS FLOW FAILED` banner to stderr, and writes `projects/<Name>/.smelters/resume.json` with the last checker raw output plus metadata (`task_path`, `repo`, `max_iterations`, timestamp). That directory is gitignored. The banner explains the situation using the last captured checker step: for example, a valid `"status": "failed"` JSON (tests/build still failing) is described differently from missing checker contract JSON.
+
+**Resume.** Re-run with a higher `--max-iterations` on the same task and project; the Gradle tree already reflects the last attempt. Optionally add `--resume` so the first coder iteration sees the saved checker output (task preamble for Claude/Gemini agents; `previous_step_content` for `claude-cli` / `opencode` coders). The resume file is removed when the PR-create step runs (checker gate opened). A concrete suggested command is included in the failure banner.
+
+**Live output and `--debug-logging`.** Model and tool activity for Agno API agents is streamed to the terminal by default (`print_response` with streaming). Pass **`--debug-logging`** to also (1) set Agno agent + workflow loggers to DEBUG and (2) **stream combined stdout/stderr** from Smelters **opencode** subprocess steps (coder, checker, reviewer) to the terminal while still capturing the full transcript for the workflow. This is separate from the API token stream; use `2>&1 | tee run.log` if you want one file with everything. You can also set `debug_logging: true` in `agent_config.yml` (boolean or `true`/`yes` string). Non-opencode subprocess backends (`claude-cli`) are unchanged by the opencode streaming half of this flag.
+
 ### Smelters — YAML keys and CLI parameters (`agno_orchestrator.py`)
 
 **Recommended:** configure backends and opencode models in `agent_config.yml` and **do not** pass `--coder`, `--checker`, or `--reviewer` on the command line. Those three flags exist only to **override** the YAML values for a single run (you can pass one, two, or all three).
@@ -118,6 +126,7 @@ In smelters mode (`Project: <Name>` task format), the orchestrator runs coder/ch
 | `opencode_coder_model` | `opencode run --model …` when coder backend is `opencode` |
 | `opencode_checker_model` | Same when checker backend is `opencode` |
 | `opencode_reviewer_model` | Same when reviewer backend is `opencode` |
+| `debug_logging` | off | When true, same as `--debug-logging` (OR with CLI): Agno DEBUG loggers plus live opencode subprocess output for Smelters. |
 
 **Smelters-related CLI flags** (all optional except `--task` and, for PR flow, repo/token as noted):
 
@@ -132,19 +141,23 @@ In smelters mode (`Project: <Name>` task format), the orchestrator runs coder/ch
 | `--coder-model` | `sonnet` | Only for `--coder claude-cli` (Claude Code CLI model). |
 | `--checker-model` | `sonnet` | Only for `--checker claude-cli`. |
 | `--max-iterations` | `3` | Coder ⇄ checker loop cap. |
+| `--resume` | off | Smelters only: require `projects/<Name>/.smelters/resume.json` and seed the first coder pass with `last_checker_output`. |
 | `--repo` | *(none)* | **Required in Smelters** for PR create/review: `owner/name`. |
 | `--base-branch` | `main` | PR base branch. |
 | `--head-branch` | inferred | PR head branch if you need to pin it. |
 | `--pr-title` | inferred | PR title override. |
 | `--pr-body-file` | none | Markdown file for PR body (must exist if set). |
-| `--github-token-env` | `GITHUB_TOKEN` | Env var **name** holding the token (var must be set). |
+| `--github-token-env` | `GITHUB_TOKEN` | Env var **name** for `gh api` (`GH_TOKEN`). If unset, credentials come from `gh auth token` after `gh auth login`; if neither works, the run fails with a clear error. |
 | `--task-context-mode` | `inline` | `inline` = embed task text in reviewer prompt; `path` = path only. |
+| `--debug-logging` | off | Agno agent + workflow loggers at DEBUG; Smelters opencode steps stream child stdout/stderr live. Class and Smelters. |
 | `--auto` | off | **Class mode only** — not Smelters; drops human-review gates in TDD pipeline. |
 
 Example with **only YAML-driven backends** (no `--coder` / `--checker` / `--reviewer`):
 
 ```bash
-export GITHUB_TOKEN=…
+# Optional if `gh auth login` already provides credentials:
+# export GITHUB_TOKEN=…
+
 uv run python agno_orchestrator.py \
   --task tasks/DemoApp/your-task.md \
   --repo your-org/the-smelters
@@ -382,7 +395,7 @@ The legacy orchestrator accepts `--coder` and `--checker` flags that override `a
 Smelters PR/review flags (also documented in the Smelters subsection):
 
 - `--repo owner/name` (required in smelters mode)
-- `--github-token-env GITHUB_TOKEN` (required variable must be set)
+- `--github-token-env GITHUB_TOKEN` (variable optional if `gh` is logged in; Smelters fills from `gh auth token` when needed)
 - `--task-context-mode inline|path` (default `inline`)
 - optional: `--base-branch`, `--head-branch`, `--pr-title`, `--pr-body-file`
 

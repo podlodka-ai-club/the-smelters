@@ -14,6 +14,12 @@ _MALFORMED: dict[str, Any] = {
     "flaky": False,
 }
 
+_NO_CONTRACT_BUILD_ERRORS = (
+    "checker did not emit a final JSON object line with "
+    '"status": "passed" or "failed" '
+    "(subprocess exit code 0 is not the Smelters gate)"
+)
+
 
 def clamp_str(value: Any, limit: int) -> str:
     text = value if isinstance(value, str) else str(value)
@@ -39,6 +45,32 @@ def clamp_failed_tests(items: Any) -> list[dict[str, str]]:
             }
         )
     return out
+
+
+def last_json_line_with_checker_status(text: str) -> str | None:
+    """Return the last non-empty line that parses as a JSON object containing a ``status`` key."""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            parsed = json.loads(line)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(parsed, dict) and "status" in parsed:
+            return line
+    return None
+
+
+def normalize_checker_stdout_to_json_content(text: str) -> str:
+    """Normalize noisy checker stdout to a single JSON line matching the Smelters checker contract."""
+    line = last_json_line_with_checker_status(text or "")
+    if line:
+        normalized = extract_and_validate_json(line)
+        return json.dumps(normalized)
+    payload = dict(_MALFORMED)
+    payload["build_errors"] = _NO_CONTRACT_BUILD_ERRORS
+    return json.dumps(payload)
 
 
 def extract_and_validate_json(text: str) -> dict[str, Any]:

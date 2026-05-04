@@ -59,9 +59,20 @@ from agno_tools.pr_comment_publisher import publish_review_comment
 from agno_tools.pr_create_step import make_pr_create_step
 from agno_tools.pr_reviewer_step import make_pr_reviewer_step
 from shared.agent_base import load_config
+from shared.checker_utils import last_json_line_with_checker_status
+from src.smelters_flow_failure import build_smelters_rerun_cli_command, print_smelters_flow_failed_banner
 from src.smelters_flow_state import checker_passed_from_content, pr_created_from_state
+from src.smelters_post_run import summarize_smelters_post_run
 from src.smelters_review_context import SmeltersReviewContext, resolve_smelters_review_context
 from src.smelters_reviewer_backend import make_run_reviewer_backend
+from src.smelters_resume import (
+    clear_resume_file,
+    merge_resume_into_task_markdown,
+    read_resume_last_checker,
+    resume_json_path,
+    wrap_callable_coder_for_resume,
+    write_resume_state,
+)
 from src.smelters_yaml import (
     merge_cli_backend_overrides,
     resolve_agent_config_path,
@@ -263,8 +274,12 @@ def _fmt_seconds(secs: float) -> str:
     return f"{m}m {s}s"
 
 
-def run_with_metrics(workflow: Workflow, prompt: str, stream: bool = True) -> None:
-    """Run the workflow, then print a wall-clock + token-usage summary."""
+def run_with_metrics(workflow: Workflow, prompt: str, stream: bool = True) -> str:
+    """Run the workflow, then print a wall-clock + token-usage summary.
+
+    Returns the Agno ``session_id`` so callers can inspect ``get_last_run_output`` /
+    ``get_session_state`` for Smelters post-run diagnostics.
+    """
     session_id = str(uuid.uuid4())
     reset_claude_run_costs()
     start = time.time()
@@ -322,20 +337,21 @@ def run_with_metrics(workflow: Workflow, prompt: str, stream: bool = True) -> No
                 print(f"┃    {label}: ${cost:.4f}")
             print(f"┃    Total cost:     ${total_cli_cost:.4f} ({len(claude_costs)} call(s))")
         print("┗" + "━" * 73)
+    return session_id
 
 
 def _parse_checker_status(content: str) -> str:
-    """Extract `status` from CodeChecker's last-line JSON. Returns 'passed', 'failed', or 'unknown'."""
-    if not content:
+    """Extract `status` from CodeChecker's last JSON line with a ``status`` field."""
+    line = last_json_line_with_checker_status(content or "")
+    if not line:
         return "unknown"
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    for line in reversed(lines):
-        if line.startswith("{") and "status" in line and line.endswith("}"):
-            try:
-                parsed = json.loads(line)
-            except (ValueError, TypeError):
-                continue
-            return parsed.get("status", "unknown") if isinstance(parsed, dict) else "unknown"
+    try:
+        parsed = json.loads(line)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return "unknown"
+    if isinstance(parsed, dict):
+        raw = parsed.get("status", "unknown")
+        return raw if isinstance(raw, str) else "unknown"
     return "unknown"
 
 
@@ -388,6 +404,18 @@ def _publish_review_comment_step(
     return _step
 
 
+def _yaml_truthy(cfg: Dict[str, Any], key: str) -> bool:
+    """Interpret optional YAML boolean flags (bool or common string forms)."""
+    v = cfg.get(key)
+    if v is True:
+        return True
+    if v is False or v is None:
+        return False
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "on")
+    return bool(v)
+
+
 def build_smelters_workflow(
     project_path: str,
     task_content: str,
@@ -404,6 +432,8 @@ def build_smelters_workflow(
     opencode_reviewer_model: str = "opencode/nemotron-3-super-free",
     opencode_server_url: str = "",
     agent_timeout_secs: float = 7200.0,
+    resume_checker_output: Optional[str] = None,
+    debug_logging: bool = False,
 ) -> Workflow:
     """Two-step loop: coder writes tests + impl + RUN_TESTS.sh; checker runs the script.
     On failure the checker's JSON becomes input to the next coder iteration.
@@ -428,13 +458,27 @@ def build_smelters_workflow(
         opencode_reviewer_model: ``opencode run --model`` id when reviewer_backend == "opencode".
         opencode_server_url: optional ``opencode serve`` attach URL for opencode coder/checker/reviewer.
         agent_timeout_secs: max seconds for each opencode coder or checker invocation.
+        resume_checker_output: optional raw checker output from a prior failed run (``--resume``),
+            injected into the first coder pass (task text for Agno agents, ``previous_step_content``
+            for callable coders).
+        debug_logging: when True, opencode coder/checker/reviewer subprocesses stream combined
+            output to stdout while capturing the full transcript (same flag as Agno DEBUG loggers).
     """
+    resume_seed = (resume_checker_output or "").strip() or None
+    task_for_agent = (
+        merge_resume_into_task_markdown(task_content, resume_seed)
+        if resume_seed and coder_model in ("claude", "gemini")
+        else task_content
+    )
+
     if coder_model == "claude-cli":
         coder_step = make_claude_code_coder_step(
             project_path=project_path,
             task_content=task_content,
             model_alias=coder_claude_model,
         )
+        if resume_seed:
+            coder_step = wrap_callable_coder_for_resume(coder_step, resume_seed)
     elif coder_model == "opencode":
         from agno_tools.opencode_coder_step import make_opencode_coder_step
 
@@ -444,11 +488,14 @@ def build_smelters_workflow(
             model_id=opencode_coder_model,
             opencode_server_url=opencode_server_url,
             timeout_secs=agent_timeout_secs,
+            stream_output=debug_logging,
         )
+        if resume_seed:
+            coder_step = wrap_callable_coder_for_resume(coder_step, resume_seed)
     else:
         coder_step = make_android_coder(
             project_path=project_path,
-            task_content=task_content,
+            task_content=task_for_agent,
             model=coder_model,
         )
 
@@ -465,6 +512,7 @@ def build_smelters_workflow(
             model_id=opencode_checker_model,
             opencode_server_url=opencode_server_url,
             timeout_secs=agent_timeout_secs,
+            stream_output=debug_logging,
         )
     else:
         checker_step = make_code_checker(project_path=project_path)
@@ -481,6 +529,7 @@ def build_smelters_workflow(
         opencode_reviewer_model,
         opencode_server_url=opencode_server_url,
         timeout_secs=300.0,
+        stream_output=debug_logging,
     )
     pr_reviewer_step = make_pr_reviewer_step(
         review_context,
@@ -580,6 +629,16 @@ def main() -> None:
         help="Max iterations of the coder ⇄ checker loop (smelters mode). Default: 3.",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Smelters mode only: load ``projects/<Name>/.smelters/resume.json`` and inject "
+            "``last_checker_output`` into the first coder iteration (task preamble for "
+            "Claude/Gemini agents; ``previous_step_content`` for claude-cli/opencode coders). "
+            "The file must exist (it is written when a run ends without opening the PR path)."
+        ),
+    )
+    parser.add_argument(
         "--coder-model",
         default="sonnet",
         help=(
@@ -636,7 +695,10 @@ def main() -> None:
     parser.add_argument(
         "--github-token-env",
         default="GITHUB_TOKEN",
-        help="Environment variable name containing GitHub token (default: GITHUB_TOKEN).",
+        help=(
+            "Env var name for GitHub token used by gh api (default: GITHUB_TOKEN). "
+            "Optional: if unset, the orchestrator runs `gh auth token` when `gh` is logged in."
+        ),
     )
     parser.add_argument(
         "--task-context-mode",
@@ -647,7 +709,28 @@ def main() -> None:
             "'inline' embeds markdown text, 'path' passes task file path."
         ),
     )
+    parser.add_argument(
+        "--debug-logging",
+        action="store_true",
+        help=(
+            "Enable Agno agent + workflow loggers at DEBUG, and stream combined stdout/stderr "
+            "from opencode subprocess steps (Smelters coder/checker/reviewer) to the terminal "
+            "while still capturing full output. Use 2>&1 | tee run.log to keep one file with "
+            "streamed model output and subprocess logs."
+        ),
+    )
     args = parser.parse_args()
+
+    agent_config_file = resolve_agent_config_path(args.agent_config)
+    agent_cfg = load_config(config_path=agent_config_file)
+    debug_logging = _yaml_truthy(agent_cfg, "debug_logging") or bool(
+        getattr(args, "debug_logging", False)
+    )
+    if debug_logging:
+        from agno.utils.log import set_log_level_to_debug
+
+        set_log_level_to_debug(source_type=None)
+        set_log_level_to_debug(source_type="workflow")
 
     task_path = Path(args.task)
     if not task_path.exists() or not task_path.is_file():
@@ -679,8 +762,6 @@ def main() -> None:
             project_path=project_path,
         )
 
-        agent_config_file = resolve_agent_config_path(args.agent_config)
-        agent_cfg = load_config(config_path=agent_config_file)
         yaml_backends = resolve_smelters_backends_from_yaml(agent_cfg)
         sm = merge_cli_backend_overrides(
             yaml_backends,
@@ -769,6 +850,17 @@ def main() -> None:
             f"  Loop:    Coder ⇄ Checker, max {args.max_iterations} iterations\n"
         )
 
+        resume_path = resume_json_path(project_path)
+        resume_checker_output: Optional[str] = None
+        if args.resume:
+            loaded = read_resume_last_checker(resume_path)
+            if loaded is None:
+                sys.exit(
+                    f"ERROR: --resume requires a readable resume file at {resume_path}\n"
+                    "  (It is written when a Smelters run ends without opening the PR path.)"
+                )
+            resume_checker_output = loaded
+
         workflow = build_smelters_workflow(
             project_path=str(project_path),
             task_content=text,
@@ -784,9 +876,42 @@ def main() -> None:
             opencode_reviewer_model=opencode_reviewer_model,
             opencode_server_url=opencode_server_url,
             agent_timeout_secs=agent_timeout_secs,
+            resume_checker_output=resume_checker_output,
+            debug_logging=debug_logging,
         )
-        run_with_metrics(workflow, "Begin work on the task spec embedded in your instructions.")
-        sys.exit(0)
+        session_id = run_with_metrics(workflow, "Begin work on the task spec embedded in your instructions.")
+        summary = summarize_smelters_post_run(workflow, session_id)
+        agent_config_for_cli = agent_config_file if agent_config_file.is_file() else None
+        suggested_max = max(args.max_iterations + 5, 8)
+        if summary.pr_create_step_ran:
+            clear_resume_file(resume_path)
+            sys.exit(0 if summary.pr_create_ok else 1)
+
+        write_resume_state(
+            resume_path,
+            task_path=task_path,
+            repo=review_context.repo,
+            max_iterations=args.max_iterations,
+            last_checker_output=summary.last_checker_raw or "",
+        )
+        rerun_cli = build_smelters_rerun_cli_command(
+            args,
+            task_path=task_path,
+            project_path=project_path,
+            agent_config_file=agent_config_for_cli,
+            repo=review_context.repo,
+            base_branch=review_context.base_branch,
+            suggested_max_iterations=suggested_max,
+            include_resume_flag=True,
+        )
+        print_smelters_flow_failed_banner(
+            resume_file=resume_path,
+            suggested_command=rerun_cli,
+            coder_loop_total_iterations=summary.coder_loop_total_iterations,
+            coder_loop_max_iterations=summary.coder_loop_max_iterations,
+            last_checker_raw=summary.last_checker_raw,
+        )
+        sys.exit(1)
 
     # fmt == "class"
     if not os.environ.get("GOOGLE_API_KEY"):

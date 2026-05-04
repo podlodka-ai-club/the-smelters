@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable
 
+from src.github_auth import fill_github_token_from_cli, missing_github_token_message
+
 
 REVIEW_COMMENT_MARKER = "<!-- smelters-review-comment -->"
 
@@ -56,13 +58,14 @@ def publish_review_comment(
     token_env_name: str,
     run_command: Callable[[list[str], dict[str, str] | None], GhCommandResult] = _run_gh_command,
 ) -> CommentPublishResult:
+    fill_github_token_from_cli(token_env_name)
     token = os.environ.get(token_env_name, "")
     if not token:
         return CommentPublishResult(
             ok=False,
             comment_id=None,
             action="none",
-            error=f"{token_env_name} is not set",
+            error=missing_github_token_message(token_env_name),
         )
     env = os.environ.copy()
     env["GH_TOKEN"] = token

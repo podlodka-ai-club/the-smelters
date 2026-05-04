@@ -52,6 +52,8 @@ def test_publish_review_comment_updates_existing_marker_comment(monkeypatch) -> 
 
 def test_publish_review_comment_requires_token(monkeypatch) -> None:
     monkeypatch.delenv("MISSING_TOKEN", raising=False)
+    monkeypatch.setattr("src.github_auth.fill_github_token_from_cli", lambda _n: False)
+    monkeypatch.setattr("src.github_auth.shutil.which", lambda _: None)
     result = publish_review_comment(
         repo="podlodka-ai-club/the-smelters",
         pr_number=10,
@@ -61,6 +63,7 @@ def test_publish_review_comment_requires_token(monkeypatch) -> None:
     )
     assert result.ok is False
     assert "MISSING_TOKEN is not set" in (result.error or "")
+    assert "not on PATH" in (result.error or "")
 
 
 def test_publish_review_comment_surfaces_api_failure(monkeypatch) -> None:

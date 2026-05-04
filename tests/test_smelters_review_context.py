@@ -74,10 +74,11 @@ def test_resolve_context_rejects_invalid_repo(tmp_path: Path, monkeypatch: pytes
 
 def test_resolve_context_requires_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MISSING_TOKEN", raising=False)
+    monkeypatch.setattr("src.github_auth.fill_github_token_from_cli", lambda _name: False)
     _init_git_repo(tmp_path)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "projects" / "DemoApp").mkdir(parents=True)
-    with pytest.raises(SystemExit, match="MISSING_TOKEN is not set"):
+    with pytest.raises(SystemExit, match="GitHub authentication required"):
         resolve_smelters_review_context(
             _args(github_token_env="MISSING_TOKEN"),
             task_path=Path("tasks/the-smelters/001.md"),

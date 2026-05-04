@@ -54,5 +54,9 @@ anthropic_api_key: ""
 # Timeout in seconds for the agent to complete a task (default: 2 hours = 7200 seconds)
 agent_timeout: 7200
 
+# Optional: enable Agno DEBUG loggers and stream opencode subprocess stdout/stderr during Smelters
+# (same as CLI --debug-logging). OR with the CLI flag if either is set.
+# debug_logging: true
+
 # Timeout in seconds for no stdout activity during agent run (default: 10 minutes)
 agent_inactivity_timeout: 900

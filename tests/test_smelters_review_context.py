@@ -47,13 +47,13 @@ def test_resolve_context_normalizes_fields(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.chdir(repo)
     context = resolve_smelters_review_context(
         _args(repo="  podlodka-ai-club/the-smelters  ", pr_title="  title "),
-        task_path=Path("tasks/the-smelters/001.md"),
+        task_path=Path("tasks/DemoApp/10-gifloadresult-getornull.md"),
         task_markdown="# task",
         project_path=Path("projects/DemoApp"),
     )
     assert context.repo == "podlodka-ai-club/the-smelters"
     assert context.pr_title == "title"
-    assert context.task_path.endswith("tasks/the-smelters/001.md")
+    assert context.task_path.endswith("tasks/DemoApp/10-gifloadresult-getornull.md")
     assert context.task_markdown == "# task"
     assert context.project_scope_posix == "projects/DemoApp"
 
@@ -66,7 +66,7 @@ def test_resolve_context_rejects_invalid_repo(tmp_path: Path, monkeypatch: pytes
     with pytest.raises(SystemExit, match="Expected format: owner/name"):
         resolve_smelters_review_context(
             _args(repo="bad"),
-            task_path=Path("tasks/the-smelters/001.md"),
+            task_path=Path("tasks/DemoApp/10-gifloadresult-getornull.md"),
             task_markdown="x",
             project_path=Path("projects/DemoApp"),
         )
@@ -81,7 +81,7 @@ def test_resolve_context_requires_token(tmp_path: Path, monkeypatch: pytest.Monk
     with pytest.raises(SystemExit, match="GitHub authentication required"):
         resolve_smelters_review_context(
             _args(github_token_env="MISSING_TOKEN"),
-            task_path=Path("tasks/the-smelters/001.md"),
+            task_path=Path("tasks/DemoApp/10-gifloadresult-getornull.md"),
             task_markdown="x",
             project_path=Path("projects/DemoApp"),
         )

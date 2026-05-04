@@ -20,7 +20,7 @@ def _context() -> SmeltersReviewContext:
         pr_body_file=None,
         github_token_env="GITHUB_TOKEN",
         task_context_mode="inline",
-        task_path="tasks/the-smelters/001.md",
+        task_path="tasks/DemoApp/10-gifloadresult-getornull.md",
         task_markdown="# task",
         project_scope_posix="projects/DemoApp",
     )

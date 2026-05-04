@@ -20,7 +20,7 @@ def _context(mode: str = "inline") -> SmeltersReviewContext:
         pr_body_file=None,
         github_token_env="GITHUB_TOKEN",
         task_context_mode=mode,
-        task_path="tasks/the-smelters/005.md",
+        task_path="tasks/DemoApp/10-gifloadresult-getornull.md",
         task_markdown="# Reviewer task",
         project_scope_posix="projects/DemoApp",
     )
@@ -29,7 +29,7 @@ def _context(mode: str = "inline") -> SmeltersReviewContext:
 def test_build_reviewer_prompt_includes_inline_task_markdown() -> None:
     request = build_reviewer_request(_context("inline"), backend="claude", pr_number=10, pr_url=None)
     prompt = build_reviewer_prompt(request)
-    assert "Task spec path: tasks/the-smelters/005.md" in prompt
+    assert "Task spec path: tasks/DemoApp/10-gifloadresult-getornull.md" in prompt
     assert "Task spec markdown:" in prompt
     assert "# Reviewer task" in prompt
 
@@ -37,7 +37,7 @@ def test_build_reviewer_prompt_includes_inline_task_markdown() -> None:
 def test_build_reviewer_prompt_path_mode_skips_markdown_body() -> None:
     request = build_reviewer_request(_context("path"), backend="opencode", pr_number=None, pr_url="https://x/pr/1")
     prompt = build_reviewer_prompt(request)
-    assert "Task spec path: tasks/the-smelters/005.md" in prompt
+    assert "Task spec path: tasks/DemoApp/10-gifloadresult-getornull.md" in prompt
     assert "Task spec markdown:" not in prompt
 
 
@@ -95,5 +95,5 @@ def test_make_pr_reviewer_step_passes_context_to_backend() -> None:
     )
     _ = step(step_input=None, session_state={})
 
-    assert "Task spec path: tasks/the-smelters/005.md" in seen["prompt"]
+    assert "Task spec path: tasks/DemoApp/10-gifloadresult-getornull.md" in seen["prompt"]
     assert "Task spec markdown:" in seen["prompt"]

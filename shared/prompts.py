@@ -46,6 +46,11 @@ Rules:
        ./gradlew :data:favorites:test :feature:favorites:test --quiet
 7. MINIMAL CHANGE. Make the smallest change needed to satisfy the task. Do NOT modify
    unrelated files. Do NOT refactor outside scope.
+7b. ROOM + MODULE BOUNDARIES. `@Entity` and `@Dao` MUST live in the same Gradle module as
+   `@Database` (for this repo: `:core:database`). Do NOT recreate entities under
+   `data/*/local/` while `AppDatabase` lives in `:core:database` — KAPT will not see them.
+   Do NOT switch modules to KSP or rewrite `plugins { }` / `compileSdk` / JVM targets in
+   `build.gradle.kts` unless the task explicitly demands it; follow existing modules.
 8. SAFETY: never run `rm -rf /`, `git push`, `git commit`, `git merge`, `git reset`,
    `git rebase`, `curl`, `wget`, `sudo`, `pip install`, or anything that mutates remote
    state.

@@ -10,12 +10,24 @@ gemini_api_key: ""
 anthropic_api_key: ""
 
 # Model to use with opencode CLI (provider/model)
-# Default model for android_coder runs.
+# Default model for legacy agents/android_coder and shared/agent_base subprocess runs.
 gemini_model: google/gemini-3.1-pro-preview-customtools
+
+# Smelters workflow (agno_orchestrator.py): backends when CLI omits --coder/--checker/--reviewer.
+# Override per run with those flags. Values: coder [claude|gemini|claude-cli|opencode],
+# checker [gemini|claude-cli|opencode], reviewer [claude|opencode].
+smelters_coder_backend: opencode
+smelters_checker_backend: opencode
+smelters_reviewer_backend: opencode
+
+# Per-role opencode models (`opencode run --model <id>`) when backend is opencode.
+# Use IDs from `opencode models` — not every id exists in every install (e.g. ling may be absent).
+opencode_coder_model: opencode/minimax-m2.5-free
+opencode_checker_model: opencode/minimax-m2.5-free
+opencode_reviewer_model: opencode/minimax-m2.5-free
 #
-# Other FREE models available in your current opencode setup:
+# Other FREE models often available (run `opencode models` to confirm):
 # - opencode/hy3-preview-free
-# - opencode/ling-2.6-flash-free
 # - opencode/minimax-m2.5-free
 # - opencode/nemotron-3-super-free
 # - google/gemma-3-4b-it
@@ -41,6 +53,10 @@ anthropic_api_key: ""
 
 # Timeout in seconds for the agent to complete a task (default: 2 hours = 7200 seconds)
 agent_timeout: 7200
+
+# Optional: enable Agno DEBUG loggers and stream opencode subprocess stdout/stderr during Smelters
+# (same as CLI --debug-logging). OR with the CLI flag if either is set.
+# debug_logging: true
 
 # Timeout in seconds for no stdout activity during agent run (default: 10 minutes)
 agent_inactivity_timeout: 900

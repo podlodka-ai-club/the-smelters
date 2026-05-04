@@ -34,19 +34,26 @@ DEFAULT_CONFIG: dict[str, Any] = {
 DEFAULT_GEMINI_MODEL = "google/gemini-2.5-flash"
 
 
-def load_config(env_prefix: str = "") -> dict[str, Any]:
-    """Load `agent_config.yml` from REPO_ROOT or cwd; fall back to safe defaults.
+def load_config(env_prefix: str = "", *, config_path: Path | str | None = None) -> dict[str, Any]:
+    """Load agent YAML from ``config_path``, or from ``REPO_ROOT``/cwd ``agent_config.yml``.
+
+    If ``config_path`` is set, that file is used when it exists (callers may validate earlier).
+    Otherwise discovery tries ``$REPO_ROOT/agent_config.yml`` then ``./agent_config.yml``.
+    Missing files yield merge-safe defaults (see ``DEFAULT_CONFIG``).
 
     env_prefix lets orchestrator override per-role settings via env vars:
       CODER_IMPLEMENTATION / CODER_MODEL for the coder agent
       CHECKER_IMPLEMENTATION / CHECKER_MODEL for the reviewer agent
     """
-    config_path = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
-    if not config_path.exists():
-        config_path = Path("agent_config.yml")
+    if config_path is not None:
+        p = Path(config_path)
+    else:
+        p = Path(os.environ.get("REPO_ROOT", Path.cwd())) / "agent_config.yml"
+        if not p.exists():
+            p = Path("agent_config.yml")
     config: dict[str, Any] = {}
-    if config_path.exists():
-        with open(config_path) as f:
+    if p.exists():
+        with open(p) as f:
             config = yaml.safe_load(f) or {}
     else:
         config = dict(DEFAULT_CONFIG)

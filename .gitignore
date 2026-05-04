@@ -11,3 +11,6 @@ worktrees/
 target_repo/.git/
 .target_repo_git/
 projects/*/.git/
+
+# Smelters CLI local resume state (checker output + metadata)
+**/.smelters/

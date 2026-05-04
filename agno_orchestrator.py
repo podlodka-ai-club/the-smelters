@@ -62,6 +62,33 @@ from agno_tools.claude_code_step import (
     make_claude_code_coder_step,
     reset_claude_run_costs,
 )
+from agno_tools.pr_comment_publisher import publish_review_comment
+from agno_tools.pr_create_step import make_pr_create_step
+from agno_tools.pr_reviewer_step import make_pr_reviewer_step
+from shared.agent_base import load_config
+from shared.checker_utils import last_json_line_with_checker_status
+from src.smelters_flow_failure import build_smelters_rerun_cli_command, print_smelters_flow_failed_banner
+from src.smelters_flow_state import (
+    checker_infrastructure_error_from_content,
+    checker_passed_from_content,
+    pr_created_from_state,
+)
+from src.smelters_post_run import summarize_smelters_post_run
+from src.smelters_review_context import SmeltersReviewContext, resolve_smelters_review_context
+from src.smelters_reviewer_backend import make_run_reviewer_backend
+from src.smelters_resume import (
+    clear_resume_file,
+    merge_resume_into_task_markdown,
+    read_resume_last_checker,
+    resume_json_path,
+    wrap_callable_coder_for_resume,
+    write_resume_state,
+)
+from src.smelters_yaml import (
+    merge_cli_backend_overrides,
+    resolve_agent_config_path,
+    resolve_smelters_backends_from_yaml,
+)
 
 
 @dataclass(frozen=True)
@@ -297,12 +324,14 @@ def run_with_metrics(
     task_id: Optional[int] = None,
     events_path: Optional[Path] = None,
     max_iterations: Optional[int] = None,
-) -> None:
+) -> str:
     """Run the workflow with a live rich progress display, then print a metrics summary.
 
-    When `task_id` and `events_path` are provided, also emits structured events to
-    events.jsonl: `loop_iteration`, `task_aborted`, `agent_error_caught`. On transient
-    LLM API errors the run is retried with the same `session_id`, letting Agno's
+    Returns ``session_id`` for Smelters post-run diagnostics (``summarize_smelters_post_run``, etc.).
+
+    When ``task_id`` and ``events_path`` are provided, also emits structured events to
+    events.jsonl: ``loop_iteration``, ``task_aborted``, ``agent_error_caught``. On transient
+    LLM API errors the run is retried with the same ``session_id``, letting Agno's
     persistent storage resume from the last cached step result."""
     from rich.console import Console
     from rich.live import Live
@@ -531,20 +560,21 @@ def run_with_metrics(
                 print(f"┃    {label}: ${cost:.4f}")
             print(f"┃    Total cost:     ${total_cli_cost:.4f} ({len(claude_costs)} call(s))")
         print("┗" + "━" * 73)
+    return session_id
 
 
 def _parse_checker_status(content: str) -> str:
-    """Extract `status` from CodeChecker's last-line JSON. Returns 'passed', 'failed', or 'unknown'."""
-    if not content:
+    """Extract `status` from CodeChecker's last JSON line with a ``status`` field."""
+    line = last_json_line_with_checker_status(content or "")
+    if not line:
         return "unknown"
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    for line in reversed(lines):
-        if line.startswith("{") and "status" in line and line.endswith("}"):
-            try:
-                parsed = json.loads(line)
-            except (ValueError, TypeError):
-                continue
-            return parsed.get("status", "unknown") if isinstance(parsed, dict) else "unknown"
+    try:
+        parsed = json.loads(line)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return "unknown"
+    if isinstance(parsed, dict):
+        raw = parsed.get("status", "unknown")
+        return raw if isinstance(raw, str) else "unknown"
     return "unknown"
 
 
@@ -552,6 +582,31 @@ def _checker_passed(outputs: List[Any]) -> bool:
     if not outputs:
         return False
     return _parse_checker_status(outputs[-1].content or "") == "passed"
+
+
+_CODER_CHECKER_LOOP_NAME = "CoderCheckerLoop"
+
+
+def _coder_checker_loop_finished(outputs: List[Any]) -> bool:
+    """Stop the loop when tests pass or when the checker reports a tooling/infra error."""
+    if not outputs:
+        return False
+    tail = outputs[-1].content or ""
+    return _checker_passed(outputs) or checker_infrastructure_error_from_content(tail)
+
+
+def _checker_text_for_pr_gate(step_input: StepInput) -> str:
+    """Agno sets ``previous_step_content`` to the Loop summary string, not inner checker output."""
+    prev = step_input.previous_step_content or ""
+    if checker_passed_from_content(prev):
+        return prev
+    loop_out = step_input.get_step_output(_CODER_CHECKER_LOOP_NAME)
+    if loop_out and getattr(loop_out, "steps", None):
+        for nested in reversed(list(loop_out.steps)):
+            content = getattr(nested, "content", None) or ""
+            if isinstance(content, str) and content.strip() and checker_passed_from_content(content):
+                return content
+    return prev
 
 
 _MAX_DIFF_CHARS = 8000
@@ -616,14 +671,79 @@ def make_diff_tracker(project_path: str) -> Callable[..., StepOutput]:
     return diff_tracker
 
 
+def _checker_passed_from_step(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    return checker_passed_from_content(_checker_text_for_pr_gate(step_input))
+
+
+def _pr_created_from_state(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    return pr_created_from_state(session_state or {})
+
+
+def _publish_review_comment_step(
+    context: SmeltersReviewContext,
+):
+    def _step(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> StepOutput:
+        state = session_state or {}
+        pr_payload = state.get("pr_create_result") or {}
+        review_payload = state.get("pr_reviewer_result") or {}
+        pr_number = pr_payload.get("pr_number")
+        if not isinstance(pr_number, int):
+            return StepOutput(content='{"ok": false, "error": "missing PR number for comment publish"}')
+        comment_body = (
+            "## Reviewer result\n"
+            f"- Approved: {review_payload.get('approved')}\n"
+            f"- Notes: {review_payload.get('notes')}\n"
+        )
+        result = publish_review_comment(
+            repo=context.repo,
+            pr_number=pr_number,
+            body=comment_body,
+            token_env_name=context.github_token_env,
+        )
+        payload = {
+            "ok": result.ok,
+            "comment_id": result.comment_id,
+            "action": result.action,
+            "error": result.error,
+        }
+        if session_state is not None:
+            session_state["pr_comment_result"] = payload.copy()
+        return StepOutput(content=json.dumps(payload))
+
+    _step.__name__ = "publish_review_comment_step"
+    return _step
+
+
+def _yaml_truthy(cfg: Dict[str, Any], key: str) -> bool:
+    """Interpret optional YAML boolean flags (bool or common string forms)."""
+    v = cfg.get(key)
+    if v is True:
+        return True
+    if v is False or v is None:
+        return False
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "1", "yes", "on")
+    return bool(v)
+
+
 def build_smelters_workflow(
     project_path: str,
     task_content: str,
+    review_context: SmeltersReviewContext,
     coder_model: str = "claude",
     checker_backend: str = "gemini",
+    reviewer_backend: str = "claude",
     max_iterations: int = MAX_FIX_ITERATIONS,
     coder_claude_model: str = "sonnet",
     checker_claude_model: str = "sonnet",
+    *,
+    opencode_coder_model: str = "opencode/minimax-m2.5-free",
+    opencode_checker_model: str = "opencode/ling-2.6-flash-free",
+    opencode_reviewer_model: str = "opencode/nemotron-3-super-free",
+    opencode_server_url: str = "",
+    agent_timeout_secs: float = 7200.0,
+    resume_checker_output: Optional[str] = None,
+    debug_logging: bool = False,
     db: Optional[SqliteDb] = None,
 ) -> Workflow:
     """Two-step loop: coder writes tests + impl + RUN_TESTS.sh; checker runs the script.
@@ -632,27 +752,61 @@ def build_smelters_workflow(
     Args:
         coder_model: coder backend:
           - "claude":     Agno Agent on Claude Sonnet 4.6 (needs ANTHROPIC_API_KEY)
-          - "gemini":     Agno Agent on Gemini 3.1 Pro Preview (needs GOOGLE_API_KEY)
+          - "gemini":     Agno Agent on Gemini 2.5 Flash (needs GOOGLE_API_KEY)
           - "claude-cli": subprocess to `claude -p` (needs Claude Code logged in)
         checker_backend: checker backend:
-          - "gemini":     Agno Agent on Gemini 3.1 Pro Preview (needs GOOGLE_API_KEY)
+          - "gemini":     Agno Agent on Gemini 2.5 Flash (needs GOOGLE_API_KEY)
           - "claude-cli": subprocess to `claude -p` (needs Claude Code logged in)
+          - "opencode":   `opencode run` with ``opencode_checker_model`` from agent_config.yml
         coder_claude_model: model passed to `claude --model ...` when
             coder_model == 'claude-cli'. Aliases ("sonnet" [default], "opus", "haiku")
             or full IDs ("claude-sonnet-4-6"). Ignored for other backends.
         checker_claude_model: same as above but for checker (default "sonnet"; "haiku"
             is a great cheap pick for the checker phase).
+        opencode_coder_model: ``opencode run --model`` id when coder_model == "opencode"
+            (default from agent_config.yml).
+        opencode_checker_model: ``opencode run --model`` id when checker_backend == "opencode".
+        opencode_reviewer_model: ``opencode run --model`` id when reviewer_backend == "opencode".
+        opencode_server_url: optional ``opencode serve`` attach URL for opencode coder/checker/reviewer.
+        agent_timeout_secs: max seconds for each opencode coder or checker invocation.
+        resume_checker_output: optional raw checker output from a prior failed run (``--resume``),
+            injected into the first coder pass (task text for Agno agents, ``previous_step_content``
+            for callable coders).
+        debug_logging: when True, opencode coder/checker/reviewer subprocesses stream combined
+            output to stdout while capturing the full transcript (same flag as Agno DEBUG loggers).
     """
+    resume_seed = (resume_checker_output or "").strip() or None
+    task_for_agent = (
+        merge_resume_into_task_markdown(task_content, resume_seed)
+        if resume_seed and coder_model in ("claude", "gemini")
+        else task_content
+    )
+
     if coder_model == "claude-cli":
         coder_step = make_claude_code_coder_step(
             project_path=project_path,
             task_content=task_content,
             model_alias=coder_claude_model,
         )
+        if resume_seed:
+            coder_step = wrap_callable_coder_for_resume(coder_step, resume_seed)
+    elif coder_model == "opencode":
+        from agno_tools.opencode_coder_step import make_opencode_coder_step
+
+        coder_step = make_opencode_coder_step(
+            project_path=project_path,
+            task_content=task_content,
+            model_id=opencode_coder_model,
+            opencode_server_url=opencode_server_url,
+            timeout_secs=agent_timeout_secs,
+            stream_output=debug_logging,
+        )
+        if resume_seed:
+            coder_step = wrap_callable_coder_for_resume(coder_step, resume_seed)
     else:
         coder_step = make_android_coder(
             project_path=project_path,
-            task_content=task_content,
+            task_content=task_for_agent,
             model=coder_model,
         )
 
@@ -661,22 +815,52 @@ def build_smelters_workflow(
             project_path=project_path,
             model_alias=checker_claude_model,
         )
+    elif checker_backend == "opencode":
+        from agno_tools.opencode_checker_step import make_opencode_checker_step
+
+        checker_step = make_opencode_checker_step(
+            project_path=project_path,
+            model_id=opencode_checker_model,
+            opencode_server_url=opencode_server_url,
+            timeout_secs=agent_timeout_secs,
+            stream_output=debug_logging,
+        )
     else:
         checker_step = make_code_checker(project_path=project_path)
 
     diff_step = make_diff_tracker(project_path=project_path)
 
     coder_checker_loop = Loop(
-        name="CoderCheckerLoop",
+        name=_CODER_CHECKER_LOOP_NAME,
         steps=[coder_step, checker_step, diff_step],
         max_iterations=max_iterations,
-        end_condition=_checker_passed,
+        end_condition=_coder_checker_loop_finished,
         forward_iteration_output=True,
     )
+    pr_create_step = make_pr_create_step(review_context)
+    run_reviewer = make_run_reviewer_backend(
+        opencode_reviewer_model,
+        opencode_server_url=opencode_server_url,
+        timeout_secs=300.0,
+        stream_output=debug_logging,
+    )
+    pr_reviewer_step = make_pr_reviewer_step(
+        review_context,
+        backend=reviewer_backend,
+        pr_number=None,
+        pr_url=None,
+        run_backend=run_reviewer,
+    )
+    comment_step = _publish_review_comment_step(review_context)
 
+    steps = [
+        coder_checker_loop,
+        Condition(steps=[pr_create_step], evaluator=_checker_passed_from_step),
+        Condition(steps=[pr_reviewer_step, comment_step], evaluator=_pr_created_from_state),
+    ]
     return Workflow(
         name="AgnoWorkflow",
-        steps=[coder_checker_loop],
+        steps=steps,
         db=db if db is not None else _ephemeral_db(),
     )
 
@@ -695,13 +879,23 @@ def main() -> None:
             "              CodeChecker runs RUN_TESTS.sh, parses TEST-*.xml\n"
             "                  ⇣ (if failed → JSON feedback to coder, retry)\n"
             "              done when status==passed or max iterations reached\n"
-            "    Default coder: Claude Sonnet 4.6 (use --coder gemini for cheap fallback).\n"
+            "    Smelters coder/checker/reviewer backends default from agent_config.yml "
+            "(CLI overrides).\n"
             "\n"
             "Class mode (single-class TDD) — task has `**Module/Package/Class:**` headers:\n"
             "    TestCase → TestWriter → Impl → LintLoop(detekt) → TestLoop(:module:test)\n"
             "    Coder/checker on Gemini 2.5 Flash. --auto disables human-review gates."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--agent-config",
+        default=None,
+        metavar="PATH",
+        help=(
+            "YAML config (Smelters backends, opencode model ids, timeouts). "
+            "Default: agent_config.yml under $REPO_ROOT or current directory."
+        ),
     )
     parser.add_argument(
         "--task",
@@ -724,23 +918,25 @@ def main() -> None:
     )
     parser.add_argument(
         "--coder",
-        choices=("claude", "gemini", "claude-cli"),
-        default="claude-cli",
+        choices=("claude", "gemini", "claude-cli", "opencode"),
+        default=None,
         help=(
-            "Coder backend in smelters mode. "
-            "'claude-cli' = subprocess to `claude -p` (default, uses Claude Code's subscription/auth and bundled tools). "
+            "Override Smelters coder backend (see agent_config.yml ``smelters_coder_backend``). "
             "'claude' = Agno+Sonnet 4.6 (needs ANTHROPIC_API_KEY). "
-            "'gemini' = Agno+Gemini 3.1 Pro Preview (needs GOOGLE_API_KEY)."
+            "'gemini' = Agno+Gemini 2.5 Flash (needs GOOGLE_API_KEY). "
+            "'claude-cli' = `claude -p`. "
+            "'opencode' = `opencode run` with ``opencode_coder_model``."
         ),
     )
     parser.add_argument(
         "--checker",
-        choices=("gemini", "claude-cli"),
-        default="claude-cli",
+        choices=("gemini", "claude-cli", "opencode"),
+        default=None,
         help=(
-            "Checker backend in smelters mode. "
-            "'claude-cli' = subprocess to `claude -p` (default, uses Claude Code's auth, no Google key needed). "
-            "'gemini' = Agno+Gemini 3.1 Pro Preview (needs GOOGLE_API_KEY)."
+            "Override Smelters checker backend (see ``smelters_checker_backend``). "
+            "'gemini' = Agno+Gemini 2.5 Flash. "
+            "'claude-cli' = `claude -p`. "
+            "'opencode' = `opencode run` with ``opencode_checker_model``."
         ),
     )
     parser.add_argument(
@@ -750,13 +946,23 @@ def main() -> None:
         help=f"Max iterations of the coder ⇄ checker loop (smelters mode). Default: {MAX_FIX_ITERATIONS}.",
     )
     parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Smelters mode only: load ``projects/<Name>/.smelters/resume.json`` and inject "
+            "``last_checker_output`` into the first coder iteration (task preamble for "
+            "Claude/Gemini agents; ``previous_step_content`` for claude-cli/opencode coders). "
+            "The file must exist (it is written when a run ends without opening the PR path)."
+        ),
+    )
+    parser.add_argument(
         "--coder-model",
         default="sonnet",
         help=(
             "Model for the coder when --coder claude-cli. "
             "Aliases ('sonnet' [default], 'opus', 'haiku' → latest of each family) "
             "or full IDs ('claude-sonnet-4-6', 'claude-opus-4-7'). "
-            "Ignored for --coder claude/gemini."
+            "Ignored for --coder claude/gemini/opencode."
         ),
     )
     parser.add_argument(
@@ -766,7 +972,68 @@ def main() -> None:
             "Model for the checker when --checker claude-cli. "
             "Aliases ('sonnet' [default], 'opus', 'haiku') or full IDs. "
             "'haiku' is a fine cheap pick — checker just runs a script and parses XML. "
-            "Ignored for --checker gemini."
+            "Ignored unless --checker claude-cli (gemini and opencode use their own model selection)."
+        ),
+    )
+    parser.add_argument(
+        "--reviewer",
+        choices=("claude", "opencode"),
+        default=None,
+        help=(
+            "Override Smelters local reviewer (see ``smelters_reviewer_backend``). "
+            "'opencode' = `opencode run` with ``opencode_reviewer_model``."
+        ),
+    )
+    parser.add_argument(
+        "--repo",
+        default=None,
+        help="GitHub repository slug for PR/review integration in smelters mode (owner/name).",
+    )
+    parser.add_argument(
+        "--base-branch",
+        default="main",
+        help="Base branch for PR creation in smelters mode (default: main).",
+    )
+    parser.add_argument(
+        "--head-branch",
+        default=None,
+        help="Optional head branch for PR creation. If omitted, runtime may infer it.",
+    )
+    parser.add_argument(
+        "--pr-title",
+        default=None,
+        help="Optional override for the PR title created by the smelters flow.",
+    )
+    parser.add_argument(
+        "--pr-body-file",
+        default=None,
+        help="Optional markdown file path used as PR body in smelters mode.",
+    )
+    parser.add_argument(
+        "--github-token-env",
+        default="GITHUB_TOKEN",
+        help=(
+            "Env var name for GitHub token used by gh api (default: GITHUB_TOKEN). "
+            "Optional: if unset, the orchestrator runs `gh auth token` when `gh` is logged in."
+        ),
+    )
+    parser.add_argument(
+        "--task-context-mode",
+        choices=("inline", "path"),
+        default="inline",
+        help=(
+            "How task context is passed to reviewer in smelters mode: "
+            "'inline' embeds markdown text, 'path' passes task file path."
+        ),
+    )
+    parser.add_argument(
+        "--debug-logging",
+        action="store_true",
+        help=(
+            "Enable Agno agent + workflow loggers at DEBUG, and stream combined stdout/stderr "
+            "from opencode subprocess steps (Smelters coder/checker/reviewer) to the terminal "
+            "while still capturing full output. Use 2>&1 | tee run.log to keep one file with "
+            "streamed model output and subprocess logs."
         ),
     )
     parser.add_argument(
@@ -791,6 +1058,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    agent_config_file = resolve_agent_config_path(args.agent_config)
+    agent_cfg = load_config(config_path=agent_config_file)
+    debug_logging = _yaml_truthy(agent_cfg, "debug_logging") or bool(
+        getattr(args, "debug_logging", False)
+    )
+    if debug_logging:
+        from agno.utils.log import set_log_level_to_debug
+
+        set_log_level_to_debug(source_type=None)
+        set_log_level_to_debug(source_type="workflow")
+
     task_path = Path(args.task)
     if not task_path.exists() or not task_path.is_file():
         sys.exit(f"ERROR: task file not found: {task_path}")
@@ -811,12 +1089,43 @@ def main() -> None:
         sys.exit(f"ERROR: project not found at {project_path}")
 
     if fmt == "smelters":
-        if args.coder == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
+        if not os.environ.get("GOOGLE_API_KEY") and os.environ.get("GEMINI_API_KEY"):
+            os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+
+        review_context = resolve_smelters_review_context(
+            args,
+            task_path=task_path,
+            task_markdown=text,
+            project_path=project_path,
+        )
+
+        yaml_backends = resolve_smelters_backends_from_yaml(agent_cfg)
+        sm = merge_cli_backend_overrides(
+            yaml_backends,
+            coder_override=args.coder,
+            checker_override=args.checker,
+            reviewer_override=args.reviewer,
+        )
+        coder_backend, checker_backend, reviewer_backend = sm.coder, sm.checker, sm.reviewer
+
+        opencode_coder_model = str(
+            agent_cfg.get("opencode_coder_model") or "opencode/minimax-m2.5-free"
+        )
+        opencode_checker_model = str(
+            agent_cfg.get("opencode_checker_model") or "opencode/ling-2.6-flash-free"
+        )
+        opencode_reviewer_model = str(
+            agent_cfg.get("opencode_reviewer_model") or "opencode/nemotron-3-super-free"
+        )
+        opencode_server_url = str(agent_cfg.get("opencode_server_url") or "")
+        agent_timeout_secs = float(agent_cfg.get("agent_timeout", 7200))
+
+        if coder_backend == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
             sys.exit(
-                "ERROR: ANTHROPIC_API_KEY is not set (required for --coder claude / default).\n"
-                "  Set it, or pass --coder gemini / --coder claude-cli."
+                "ERROR: ANTHROPIC_API_KEY is not set (required when Smelters coder is `claude`).\n"
+                "  Set it, or set ``smelters_coder_backend`` / ``--coder`` to gemini, claude-cli, or opencode."
             )
-        needs_claude_cli = args.coder == "claude-cli" or args.checker == "claude-cli"
+        needs_claude_cli = coder_backend == "claude-cli" or checker_backend == "claude-cli"
         if needs_claude_cli:
             from shutil import which
             if not (which("claude") or os.environ.get("CLAUDE_BIN")):
@@ -824,31 +1133,70 @@ def main() -> None:
                     "ERROR: claude CLI not found on PATH (required for any --coder/--checker claude-cli).\n"
                     "  Install Claude Code or set $CLAUDE_BIN to the binary path."
                 )
-        needs_google = args.coder == "gemini" or args.checker == "gemini"
-        if needs_google and not os.environ.get("GOOGLE_API_KEY"):
+        needs_opencode = (
+            coder_backend == "opencode"
+            or checker_backend == "opencode"
+            or reviewer_backend == "opencode"
+        )
+        if needs_opencode:
+            from shutil import which
+            if not which("opencode"):
+                sys.exit(
+                    "ERROR: opencode CLI not found on PATH (required when any Smelters role uses opencode).\n"
+                    "  Install opencode and ensure it is on PATH."
+                )
+        needs_google = coder_backend == "gemini" or checker_backend == "gemini"
+        if needs_google and not (
+            os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        ):
             sys.exit(
-                "ERROR: GOOGLE_API_KEY is not set (required for any --coder/--checker gemini).\n"
+                "ERROR: GOOGLE_API_KEY or GEMINI_API_KEY is not set (required when coder or checker is `gemini`).\n"
                 "  Get a key at https://aistudio.google.com/app/apikey, then export GOOGLE_API_KEY=…\n"
-                "  Or pass --coder claude-cli --checker claude-cli to skip Google entirely."
+                "  Or switch ``smelters_*_backend`` / CLI flags to opencode or claude-cli."
             )
 
         coder_label = {
             "claude": "Claude Sonnet 4.6 (Agno API)",
-            "gemini": "Gemini 3.1 Pro (preview, custom-tools)",
+            "gemini": "Gemini 2.5 Flash (Agno API)",
             "claude-cli": f"Claude Code CLI (`claude -p --model {args.coder_model}`, subscription auth)",
-        }[args.coder]
+            "opencode": f"opencode (`opencode run --model {opencode_coder_model}`)",
+        }[coder_backend]
         checker_label = {
-            "gemini": "Gemini 3.1 Pro (preview, custom-tools)",
+            "gemini": "Gemini 2.5 Flash (Agno API)",
             "claude-cli": f"Claude Code CLI (`claude -p --model {args.checker_model}`, subscription auth)",
-        }[args.checker]
+            "opencode": f"opencode (`opencode run --model {opencode_checker_model}`)",
+        }[checker_backend]
+        review_label = (
+            f"opencode (`opencode run --model {opencode_reviewer_model}`)"
+            if reviewer_backend == "opencode"
+            else reviewer_backend
+        )
         print(
             "[AgnoWorkflow]\n"
+            f"  Config:  {agent_config_file}\n"
             f"  Task:    {task_path}\n"
             f"  Project: {project_path}\n"
             f"  Coder:   {coder_label}\n"
             f"  Checker: {checker_label}\n"
+            f"  Repo:    {review_context.repo}\n"
+            f"  PR base: {review_context.base_branch}\n"
+            f"  PR head: {review_context.head_branch or '(infer)'}\n"
+            f"  Token:   ${review_context.github_token_env}\n"
+            f"  Context: {review_context.task_context_mode}\n"
+            f"  Review:  {review_label}\n"
             f"  Loop:    Coder ⇄ Checker, max {args.max_iterations} iterations\n"
         )
+
+        resume_path = resume_json_path(project_path)
+        resume_checker_output: Optional[str] = None
+        if args.resume:
+            loaded = read_resume_last_checker(resume_path)
+            if loaded is None:
+                sys.exit(
+                    f"ERROR: --resume requires a readable resume file at {resume_path}\n"
+                    "  (It is written when a Smelters run ends without opening the PR path.)"
+                )
+            resume_checker_output = loaded
 
         events_path: Optional[Path] = args.events_path
         if events_path is None and os.environ.get("EVENTS_PATH"):
@@ -873,14 +1221,23 @@ def main() -> None:
         workflow = build_smelters_workflow(
             project_path=str(project_path),
             task_content=text,
-            coder_model=args.coder,
-            checker_backend=args.checker,
+            review_context=review_context,
+            coder_model=coder_backend,
+            checker_backend=checker_backend,
+            reviewer_backend=reviewer_backend,
             max_iterations=args.max_iterations,
             coder_claude_model=args.coder_model,
             checker_claude_model=args.checker_model,
+            opencode_coder_model=opencode_coder_model,
+            opencode_checker_model=opencode_checker_model,
+            opencode_reviewer_model=opencode_reviewer_model,
+            opencode_server_url=opencode_server_url,
+            agent_timeout_secs=agent_timeout_secs,
+            resume_checker_output=resume_checker_output,
+            debug_logging=debug_logging,
             db=persistent_db,
         )
-        run_with_metrics(
+        session_id = run_with_metrics(
             workflow,
             "Begin work on the task spec embedded in your instructions.",
             session_id=smelters_session_id,
@@ -888,7 +1245,38 @@ def main() -> None:
             events_path=events_path,
             max_iterations=args.max_iterations,
         )
-        sys.exit(0)
+        summary = summarize_smelters_post_run(workflow, session_id)
+        agent_config_for_cli = agent_config_file if agent_config_file.is_file() else None
+        suggested_max = max(args.max_iterations + 5, 8)
+        if summary.pr_create_step_ran:
+            clear_resume_file(resume_path)
+            sys.exit(0 if summary.pr_create_ok else 1)
+
+        write_resume_state(
+            resume_path,
+            task_path=task_path,
+            repo=review_context.repo,
+            max_iterations=args.max_iterations,
+            last_checker_output=summary.last_checker_raw or "",
+        )
+        rerun_cli = build_smelters_rerun_cli_command(
+            args,
+            task_path=task_path,
+            project_path=project_path,
+            agent_config_file=agent_config_for_cli,
+            repo=review_context.repo,
+            base_branch=review_context.base_branch,
+            suggested_max_iterations=suggested_max,
+            include_resume_flag=True,
+        )
+        print_smelters_flow_failed_banner(
+            resume_file=resume_path,
+            suggested_command=rerun_cli,
+            coder_loop_total_iterations=summary.coder_loop_total_iterations,
+            coder_loop_max_iterations=summary.coder_loop_max_iterations,
+            last_checker_raw=summary.last_checker_raw,
+        )
+        sys.exit(1)
 
     # fmt == "class"
     if not os.environ.get("GOOGLE_API_KEY"):

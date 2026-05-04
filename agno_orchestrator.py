@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.db.sqlite import SqliteDb
 from agno.workflow import Workflow
@@ -16,6 +16,13 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput
+
+from src.events import emit_event
+
+
+MAX_FIX_ITERATIONS = 4
+RETRY_MAX_ATTEMPTS = 3
+RETRY_BASE_DELAY_S = 2.0
 
 
 _EPHEMERAL_DB_PATH: Optional[str] = None
@@ -274,17 +281,229 @@ def _fmt_seconds(secs: float) -> str:
     return f"{m}m {s}s"
 
 
-def run_with_metrics(workflow: Workflow, prompt: str, stream: bool = True) -> str:
-    """Run the workflow, then print a wall-clock + token-usage summary.
+_CHECKER_JSON_RE = re.compile(r'\{[^{}]*"status"\s*:\s*"(passed|failed)"[^{}]*\}')
 
-    Returns the Agno ``session_id`` so callers can inspect ``get_last_run_output`` /
-    ``get_session_state`` for Smelters post-run diagnostics.
-    """
-    session_id = str(uuid.uuid4())
+
+def _scan_checker_status(content: Optional[str]) -> Optional[str]:
+    """Find the LAST checker JSON in arbitrary content and return its `status`."""
+    if not content:
+        return None
+    last: Optional[str] = None
+    for m in _CHECKER_JSON_RE.finditer(content):
+        last = m.group(1)
+    return last
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Treat network blips, rate limits, and 5xx as retryable. Everything else surfaces."""
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    transient_markers = (
+        "rate limit", "rate_limit", "ratelimit", "429",
+        "502", "503", "504", "overloaded", "timeout",
+        "connection", "temporarily unavailable", "service unavailable",
+        "resource_exhausted", "deadline_exceeded", "unavailable",
+    )
+    if any(m in msg for m in transient_markers):
+        return True
+    if "timeout" in name or "connection" in name or "apierror" in name:
+        return True
+    return False
+
+
+def run_with_metrics(
+    workflow: Workflow,
+    prompt: str,
+    stream: bool = True,
+    *,
+    session_id: Optional[str] = None,
+    task_id: Optional[int] = None,
+    events_path: Optional[Path] = None,
+    max_iterations: Optional[int] = None,
+) -> str:
+    """Run the workflow with a live rich progress display, then print a metrics summary.
+
+    Returns ``session_id`` for Smelters post-run diagnostics (``summarize_smelters_post_run``, etc.).
+
+    When ``task_id`` and ``events_path`` are provided, also emits structured events to
+    events.jsonl: ``loop_iteration``, ``task_aborted``, ``agent_error_caught``. On transient
+    LLM API errors the run is retried with the same ``session_id``, letting Agno's
+    persistent storage resume from the last cached step result."""
+    from rich.console import Console
+    from rich.live import Live
+    from rich.panel import Panel
+    from rich.table import Table
+
+    if session_id is None:
+        session_id = str(uuid.uuid4())
     reset_claude_run_costs()
     start = time.time()
+
+    emit_to_jsonl = task_id is not None and events_path is not None
+
+    def _emit(actor: str, type_: str, **fields: Any) -> None:
+        if emit_to_jsonl:
+            try:
+                emit_event(events_path, task_id=task_id, actor=actor, type=type_, **fields)
+            except Exception:  # noqa: BLE001 — never let telemetry break the run
+                pass
+
+    state: Dict[str, Any] = {
+        "steps": [],
+        "loop": None,
+        "iterations_started": 0,
+        "iterations_completed": 0,
+        "last_checker_status": None,
+    }
+
+    STATUS_ICON = {
+        "waiting": "[dim]○[/dim]",
+        "running": "[bold yellow]⟳[/bold yellow]",
+        "done":    "[bold green]✓[/bold green]",
+        "failed":  "[bold red]✗[/bold red]",
+    }
+
+    def _step(name: Optional[str]) -> Optional[Dict[str, Any]]:
+        return next((s for s in state["steps"] if s["name"] == name), None)
+
+    def _make_panel() -> Panel:
+        elapsed = time.time() - start
+        tbl = Table.grid(padding=(0, 1))
+        tbl.add_column(width=2)
+        tbl.add_column(min_width=28)
+        tbl.add_column(style="dim", min_width=8)
+
+        for s in state["steps"]:
+            icon = STATUS_ICON.get(s["status"], "?")
+            dur = ""
+            if s["status"] == "running":
+                dur = _fmt_seconds(time.time() - s["t0"])
+                label = f"[bold]{s['name']}[/bold]"
+            elif s["status"] == "done":
+                dur = _fmt_seconds(s["t1"] - s["t0"])
+                label = s["name"] or ""
+            elif s["status"] == "failed":
+                label = f"[red]{s['name']}[/red]"
+                dur = "failed"
+            else:
+                label = f"[dim]{s['name']}[/dim]"
+            tbl.add_row(icon, label, dur)
+
+        lp = state["loop"]
+        loop_line = (
+            f"  [dim]{lp['name']}[/dim]  iter {lp['iter']}/{lp['max'] or '?'}"
+            if lp else ""
+        )
+        subtitle = f"[dim]{_fmt_seconds(elapsed)}[/dim]{loop_line}"
+        return Panel(tbl, title=f"[bold blue]{workflow.name}[/bold blue]", subtitle=subtitle, border_style="blue")
+
+    console = Console(stderr=True)
+
+    def _consume_events(live: "Live") -> None:
+        event_iter = workflow.run(
+            input=prompt,
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+        )
+        for event in event_iter:
+            evt = getattr(event, "event", "")
+            name = getattr(event, "step_name", None)
+
+            if evt == "StepStarted":
+                existing = _step(name)
+                if existing:
+                    existing["status"] = "running"
+                    existing["t0"] = time.time()
+                else:
+                    state["steps"].append({"name": name, "status": "running", "t0": time.time(), "t1": 0.0})
+
+            elif evt == "StepCompleted":
+                s = _step(name)
+                if s:
+                    s["status"] = "done"
+                    s["t1"] = time.time()
+                status = _scan_checker_status(getattr(event, "content", None))
+                if status:
+                    state["last_checker_status"] = status
+
+            elif evt == "StepError":
+                s = _step(name)
+                if s:
+                    s["status"] = "failed"
+                    s["t1"] = time.time()
+
+            elif evt == "LoopIterationStarted":
+                iter_num = getattr(event, "iteration", 0) + 1
+                max_iters = getattr(event, "max_iterations", max_iterations)
+                state["loop"] = {
+                    "name": name or "Loop",
+                    "iter": iter_num,
+                    "max": max_iters,
+                }
+                state["iterations_started"] = max(state["iterations_started"], iter_num)
+                _emit(
+                    actor="orchestrator",
+                    type_="loop_iteration",
+                    iteration=iter_num,
+                    max=max_iters if max_iters is not None else max_iterations,
+                )
+
+            elif evt == "LoopIterationCompleted":
+                iter_num = getattr(event, "iteration", 0) + 1
+                state["iterations_completed"] = max(state["iterations_completed"], iter_num)
+                if state["loop"]:
+                    state["loop"]["iter"] = iter_num
+
+            elif evt in ("LoopExecutionCompleted", "WorkflowCompleted"):
+                state["loop"] = None
+
+            live.update(_make_panel())
+
     try:
-        workflow.print_response(prompt, session_id=session_id, stream=stream)
+        with Live(_make_panel(), console=console, refresh_per_second=4) as live:
+            attempt = 0
+            while True:
+                try:
+                    _consume_events(live)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    attempt += 1
+                    _emit(
+                        actor="orchestrator",
+                        type_="agent_error_caught",
+                        error=f"{type(exc).__name__}: {exc}",
+                        attempt=attempt,
+                    )
+                    if attempt >= RETRY_MAX_ATTEMPTS or not _is_transient(exc):
+                        print(
+                            f"[agno_orchestrator] giving up after {attempt} attempt(s): {type(exc).__name__}: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        raise
+                    delay = RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+                    print(
+                        f"[agno_orchestrator] transient error (attempt {attempt}/{RETRY_MAX_ATTEMPTS}): "
+                        f"{type(exc).__name__}: {exc} — retrying in {delay:.1f}s",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    time.sleep(delay)
+
+        if (
+            state["last_checker_status"] != "passed"
+            and max_iterations is not None
+            and state["iterations_started"] >= max_iterations
+        ):
+            _emit(
+                actor="orchestrator",
+                type_="task_aborted",
+                reason="MAX_FIX_ITERATIONS_REACHED",
+                iterations=state["iterations_started"],
+                max=max_iterations,
+            )
+
     finally:
         elapsed = time.time() - start
         try:
@@ -311,7 +530,7 @@ def run_with_metrics(workflow: Workflow, prompt: str, stream: bool = True) -> st
             cache_r = metrics.cache_read_tokens or 0
             cache_w = metrics.cache_write_tokens or 0
             reasoning = metrics.reasoning_tokens or 0
-            if total or claude_costs:  # only show if anything happened
+            if total or claude_costs:
                 print(f"┃  [Agno-tracked agents (API)]")
                 print(f"┃    Tokens — input:   {_fmt_int(total_in)}")
                 print(f"┃    Tokens — output:  {_fmt_int(total_out)}")
@@ -359,6 +578,68 @@ def _checker_passed(outputs: List[Any]) -> bool:
     if not outputs:
         return False
     return _parse_checker_status(outputs[-1].content or "") == "passed"
+
+
+_MAX_DIFF_CHARS = 8000
+
+
+def _git(project: Path, *args: str, timeout: int = 30) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return 1, ""
+    return proc.returncode, proc.stdout
+
+
+def make_diff_tracker(project_path: str) -> Callable[..., StepOutput]:
+    """Step injected after the checker. Snapshots the worktree via `git stash create`
+    each iteration; on the *next* iteration prepends the textual diff between the
+    previous snapshot and the current worktree to the checker JSON, so the coder sees
+    exactly what its prior attempt changed and avoids reverting useful edits.
+    The checker JSON stays the LAST line, so `_checker_passed` keeps working."""
+    project = Path(project_path).resolve()
+
+    def diff_tracker(
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> StepOutput:
+        state = session_state if session_state is not None else {}
+        prev_sha = state.get("diff_baseline_sha")
+
+        prev_diff_text = ""
+        if prev_sha:
+            rc, out = _git(project, "diff", "--no-color", prev_sha)
+            if rc == 0:
+                prev_diff_text = out
+
+        rc, sha = _git(project, "stash", "create")
+        new_sha = sha.strip()
+        if rc == 0 and new_sha:
+            state["diff_baseline_sha"] = new_sha
+
+        checker_content = step_input.previous_step_content or ""
+        if not prev_diff_text.strip():
+            return StepOutput(content=checker_content)
+
+        truncated = (
+            prev_diff_text
+            if len(prev_diff_text) <= _MAX_DIFF_CHARS
+            else prev_diff_text[:_MAX_DIFF_CHARS] + "\n...(diff truncated)...\n"
+        )
+        combined = (
+            "PREVIOUS_ITERATION_DIFF (changes your previous attempt made — review them; "
+            "do NOT blindly revert correct edits while addressing the checker report):\n"
+            "```diff\n" + truncated + "\n```\n\n"
+            "CHECKER_REPORT:\n" + checker_content
+        )
+        return StepOutput(content=combined)
+
+    return diff_tracker
 
 
 def _checker_passed_from_step(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
@@ -423,7 +704,7 @@ def build_smelters_workflow(
     coder_model: str = "claude",
     checker_backend: str = "gemini",
     reviewer_backend: str = "claude",
-    max_iterations: int = 3,
+    max_iterations: int = MAX_FIX_ITERATIONS,
     coder_claude_model: str = "sonnet",
     checker_claude_model: str = "sonnet",
     *,
@@ -434,6 +715,7 @@ def build_smelters_workflow(
     agent_timeout_secs: float = 7200.0,
     resume_checker_output: Optional[str] = None,
     debug_logging: bool = False,
+    db: Optional[SqliteDb] = None,
 ) -> Workflow:
     """Two-step loop: coder writes tests + impl + RUN_TESTS.sh; checker runs the script.
     On failure the checker's JSON becomes input to the next coder iteration.
@@ -517,9 +799,11 @@ def build_smelters_workflow(
     else:
         checker_step = make_code_checker(project_path=project_path)
 
+    diff_step = make_diff_tracker(project_path=project_path)
+
     coder_checker_loop = Loop(
         name="CoderCheckerLoop",
-        steps=[coder_step, checker_step],
+        steps=[coder_step, checker_step, diff_step],
         max_iterations=max_iterations,
         end_condition=_checker_passed,
         forward_iteration_output=True,
@@ -545,7 +829,11 @@ def build_smelters_workflow(
         Condition(steps=[pr_create_step], evaluator=_checker_passed_from_step),
         Condition(steps=[pr_reviewer_step, comment_step], evaluator=_pr_created_from_state),
     ]
-    return Workflow(name="AgnoWorkflow", steps=steps, db=_ephemeral_db())
+    return Workflow(
+        name="AgnoWorkflow",
+        steps=steps,
+        db=db if db is not None else _ephemeral_db(),
+    )
 
 
 def main() -> None:
@@ -625,8 +913,8 @@ def main() -> None:
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=3,
-        help="Max iterations of the coder ⇄ checker loop (smelters mode). Default: 3.",
+        default=MAX_FIX_ITERATIONS,
+        help=f"Max iterations of the coder ⇄ checker loop (smelters mode). Default: {MAX_FIX_ITERATIONS}.",
     )
     parser.add_argument(
         "--resume",
@@ -717,6 +1005,26 @@ def main() -> None:
             "from opencode subprocess steps (Smelters coder/checker/reviewer) to the terminal "
             "while still capturing full output. Use 2>&1 | tee run.log to keep one file with "
             "streamed model output and subprocess logs."
+        ),
+    )
+    parser.add_argument(
+        "--task-id",
+        type=int,
+        default=None,
+        help=(
+            "Tracker task ID (smelters mode). When set, structured events "
+            "(loop_iteration, task_aborted, agent_error_caught) are emitted to events.jsonl "
+            "and the Agno session is persisted at database/<Project>/agno-session.sqlite, "
+            "enabling resume-where-it-left-off if the run crashes."
+        ),
+    )
+    parser.add_argument(
+        "--events-path",
+        type=Path,
+        default=None,
+        help=(
+            "Path to events.jsonl (smelters mode, paired with --task-id). "
+            "Defaults to $EVENTS_PATH or database/<Project>/events.jsonl."
         ),
     )
     args = parser.parse_args()
@@ -861,6 +1169,26 @@ def main() -> None:
                 )
             resume_checker_output = loaded
 
+        events_path: Optional[Path] = args.events_path
+        if events_path is None and os.environ.get("EVENTS_PATH"):
+            events_path = Path(os.environ["EVENTS_PATH"])
+
+        persistent_db: Optional[SqliteDb] = None
+        smelters_session_id: Optional[str] = None
+        if args.task_id is not None:
+            project_name = project_path.name
+            db_dir = Path("database") / project_name
+            db_dir.mkdir(parents=True, exist_ok=True)
+            persistent_db = SqliteDb(db_file=str(db_dir / "agno-session.sqlite"))
+            smelters_session_id = f"task-{args.task_id}"
+            if events_path is None:
+                events_path = db_dir / "events.jsonl"
+            events_path.parent.mkdir(parents=True, exist_ok=True)
+            print(
+                f"  Session: {smelters_session_id} (persistent at {db_dir / 'agno-session.sqlite'})\n"
+                f"  Events:  {events_path}\n"
+            )
+
         workflow = build_smelters_workflow(
             project_path=str(project_path),
             task_content=text,
@@ -878,8 +1206,16 @@ def main() -> None:
             agent_timeout_secs=agent_timeout_secs,
             resume_checker_output=resume_checker_output,
             debug_logging=debug_logging,
+            db=persistent_db,
         )
-        session_id = run_with_metrics(workflow, "Begin work on the task spec embedded in your instructions.")
+        session_id = run_with_metrics(
+            workflow,
+            "Begin work on the task spec embedded in your instructions.",
+            session_id=smelters_session_id,
+            task_id=args.task_id,
+            events_path=events_path,
+            max_iterations=args.max_iterations,
+        )
         summary = summarize_smelters_post_run(workflow, session_id)
         agent_config_for_cli = agent_config_file if agent_config_file.is_file() else None
         suggested_max = max(args.max_iterations + 5, 8)

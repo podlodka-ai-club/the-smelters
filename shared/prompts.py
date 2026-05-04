@@ -64,6 +64,10 @@ Rules:
     ({"status": "failed", "failed_tests": [...], "build_errors": "..."}),
     address its `failed_tests` and `build_errors` LITERALLY. Diagnose, fix, regenerate
     `RUN_TESTS.sh` if needed. Do not expand scope to chase unrelated issues.
+    If a `PREVIOUS_ITERATION_DIFF` block precedes the checker report, READ IT FIRST.
+    It shows the changes your previous attempt made. Do NOT blindly revert those edits —
+    they may already be partially correct. Build on them; only modify the parts the
+    checker report says are wrong. This prevents code thrashing across iterations.
 11. WHEN DONE, stop and print ONE final line that is a JSON object exactly:
     {"ok": true, "summary": "<brief description of what you changed>", "script_generated": "RUN_TESTS.sh"}
 """

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -12,8 +11,8 @@ from agno.workflow.types import StepInput, StepOutput
 
 from agno_agents.code_checker import CODE_CHECKER_SYSTEM_PROMPT
 from agno_tools.claude_code_step import _CHECKER_USER_PROMPT
-from agno_tools.opencode_subprocess import run_opencode_command
-from shared.checker_utils import normalize_checker_stdout_to_json_content
+from agno_tools.opencode_subprocess import describe_opencode_cli_failure, run_opencode_command
+from shared.checker_utils import emit_checker_infrastructure_json, normalize_checker_stdout_to_json_content
 
 
 def make_opencode_checker_step(
@@ -50,12 +49,9 @@ def make_opencode_checker_step(
             )
         except subprocess.TimeoutExpired:
             return StepOutput(
-                content=json.dumps(
-                    {
-                        "status": "failed",
-                        "failed_tests": [],
-                        "build_errors": f"opencode checker timed out after {timeout_secs}s",
-                    }
+                content=emit_checker_infrastructure_json(
+                    f"OpenCode checker timed out after {timeout_secs}s",
+                    "The opencode subprocess did not finish before the configured timeout.",
                 )
             )
 
@@ -65,12 +61,17 @@ def make_opencode_checker_step(
         if returncode != 0:
             tail = text_out[-800:] if text_out else ""
             return StepOutput(
-                content=json.dumps(
-                    {
-                        "status": "failed",
-                        "failed_tests": [],
-                        "build_errors": tail[:2000],
-                    }
+                content=emit_checker_infrastructure_json(
+                    f"OpenCode checker exited with code {returncode}",
+                    tail[:2000],
+                )
+            )
+        cli_fail = describe_opencode_cli_failure(text_out)
+        if cli_fail:
+            return StepOutput(
+                content=emit_checker_infrastructure_json(
+                    "OpenCode checker CLI or provider error",
+                    cli_fail,
                 )
             )
         normalized = normalize_checker_stdout_to_json_content(text_out or "")

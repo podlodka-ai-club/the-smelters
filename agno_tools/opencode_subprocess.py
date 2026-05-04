@@ -8,6 +8,28 @@ import threading
 from typing import List, Optional
 
 
+def describe_opencode_cli_failure(text: str | None) -> str | None:
+    """Detect opencode/bun failures that still use process exit code 0.
+
+    Example: ``ProviderModelNotFoundError`` / ``Model not found: …`` when the model ID
+    is not registered in the local opencode install.
+    """
+    t = text or ""
+    if not t.strip():
+        return None
+    if "ProviderModelNotFoundError" not in t and "Model not found" not in t:
+        return None
+    for line in t.splitlines():
+        s = line.strip()
+        if "Model not found" in s:
+            return s[:2000]
+    return (
+        "opencode could not resolve the requested model (ProviderModelNotFoundError). "
+        "Pick an ``opencode run --model`` id that exists in your opencode install. "
+        f"Output head: {t.strip()[:1200]}"
+    )
+
+
 def run_opencode_command(
     cmd: List[str],
     cwd: Optional[str],

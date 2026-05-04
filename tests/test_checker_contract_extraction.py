@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from shared.checker_utils import (
+    emit_checker_infrastructure_json,
     extract_and_validate_json,
     last_json_line_with_checker_status,
     normalize_checker_stdout_to_json_content,
@@ -30,8 +31,17 @@ def test_normalize_checker_stdout_contract_ok() -> None:
 def test_normalize_checker_stdout_exit_zero_shape_without_contract() -> None:
     raw = "opencode finished\nno json here\n"
     out = json.loads(normalize_checker_stdout_to_json_content(raw))
-    assert out["status"] == "failed"
-    assert "subprocess exit code 0" in (out.get("build_errors") or "")
+    assert out["status"] == "error"
+    assert out.get("scope") == "checker"
+    assert "subprocess exit code 0" in (out.get("detail") or "")
+
+
+def test_normalize_checker_preserves_infra_error_line() -> None:
+    raw = "noise\n" + emit_checker_infrastructure_json("timeout", "detail") + "\n"
+    out = json.loads(normalize_checker_stdout_to_json_content(raw))
+    assert out["status"] == "error"
+    assert out.get("scope") == "checker"
+    assert "timeout" in (out.get("message") or "")
 
 
 def test_extract_and_validate_json_rejects_bad_status_value() -> None:

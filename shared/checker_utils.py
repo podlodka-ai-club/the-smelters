@@ -21,6 +21,17 @@ _NO_CONTRACT_BUILD_ERRORS = (
 )
 
 
+def emit_checker_infrastructure_json(message: str, detail: str = "") -> str:
+    """Single-line JSON for checker/tooling failures (not test/build failures)."""
+    payload: dict[str, Any] = {
+        "status": "error",
+        "scope": "checker",
+        "message": clamp_str(message, MAX_MESSAGE_LEN),
+        "detail": clamp_str(detail, MAX_BUILD_ERRORS_LEN) if detail else "",
+    }
+    return json.dumps(payload)
+
+
 def clamp_str(value: Any, limit: int) -> str:
     text = value if isinstance(value, str) else str(value)
     if len(text) <= limit:
@@ -66,11 +77,25 @@ def normalize_checker_stdout_to_json_content(text: str) -> str:
     """Normalize noisy checker stdout to a single JSON line matching the Smelters checker contract."""
     line = last_json_line_with_checker_status(text or "")
     if line:
+        try:
+            parsed = json.loads(line)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            parsed = None
+        if (
+            isinstance(parsed, dict)
+            and parsed.get("status") == "error"
+            and parsed.get("scope") == "checker"
+        ):
+            return emit_checker_infrastructure_json(
+                str(parsed.get("message") or "checker tooling error"),
+                str(parsed.get("detail") or ""),
+            )
         normalized = extract_and_validate_json(line)
         return json.dumps(normalized)
-    payload = dict(_MALFORMED)
-    payload["build_errors"] = _NO_CONTRACT_BUILD_ERRORS
-    return json.dumps(payload)
+    return emit_checker_infrastructure_json(
+        "Checker did not emit valid contract JSON after exit 0",
+        _NO_CONTRACT_BUILD_ERRORS,
+    )
 
 
 def extract_and_validate_json(text: str) -> dict[str, Any]:

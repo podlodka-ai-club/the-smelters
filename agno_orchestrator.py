@@ -68,7 +68,11 @@ from agno_tools.pr_reviewer_step import make_pr_reviewer_step
 from shared.agent_base import load_config
 from shared.checker_utils import last_json_line_with_checker_status
 from src.smelters_flow_failure import build_smelters_rerun_cli_command, print_smelters_flow_failed_banner
-from src.smelters_flow_state import checker_passed_from_content, pr_created_from_state
+from src.smelters_flow_state import (
+    checker_infrastructure_error_from_content,
+    checker_passed_from_content,
+    pr_created_from_state,
+)
 from src.smelters_post_run import summarize_smelters_post_run
 from src.smelters_review_context import SmeltersReviewContext, resolve_smelters_review_context
 from src.smelters_reviewer_backend import make_run_reviewer_backend
@@ -580,6 +584,31 @@ def _checker_passed(outputs: List[Any]) -> bool:
     return _parse_checker_status(outputs[-1].content or "") == "passed"
 
 
+_CODER_CHECKER_LOOP_NAME = "CoderCheckerLoop"
+
+
+def _coder_checker_loop_finished(outputs: List[Any]) -> bool:
+    """Stop the loop when tests pass or when the checker reports a tooling/infra error."""
+    if not outputs:
+        return False
+    tail = outputs[-1].content or ""
+    return _checker_passed(outputs) or checker_infrastructure_error_from_content(tail)
+
+
+def _checker_text_for_pr_gate(step_input: StepInput) -> str:
+    """Agno sets ``previous_step_content`` to the Loop summary string, not inner checker output."""
+    prev = step_input.previous_step_content or ""
+    if checker_passed_from_content(prev):
+        return prev
+    loop_out = step_input.get_step_output(_CODER_CHECKER_LOOP_NAME)
+    if loop_out and getattr(loop_out, "steps", None):
+        for nested in reversed(list(loop_out.steps)):
+            content = getattr(nested, "content", None) or ""
+            if isinstance(content, str) and content.strip() and checker_passed_from_content(content):
+                return content
+    return prev
+
+
 _MAX_DIFF_CHARS = 8000
 
 
@@ -643,7 +672,7 @@ def make_diff_tracker(project_path: str) -> Callable[..., StepOutput]:
 
 
 def _checker_passed_from_step(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
-    return checker_passed_from_content(step_input.previous_step_content or "")
+    return checker_passed_from_content(_checker_text_for_pr_gate(step_input))
 
 
 def _pr_created_from_state(step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
@@ -802,10 +831,10 @@ def build_smelters_workflow(
     diff_step = make_diff_tracker(project_path=project_path)
 
     coder_checker_loop = Loop(
-        name="CoderCheckerLoop",
+        name=_CODER_CHECKER_LOOP_NAME,
         steps=[coder_step, checker_step, diff_step],
         max_iterations=max_iterations,
-        end_condition=_checker_passed,
+        end_condition=_coder_checker_loop_finished,
         forward_iteration_output=True,
     )
     pr_create_step = make_pr_create_step(review_context)

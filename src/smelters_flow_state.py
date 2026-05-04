@@ -17,6 +17,22 @@ def checker_passed_from_content(content: str) -> bool:
     return isinstance(parsed, dict) and parsed.get("status") == "passed"
 
 
+def checker_infrastructure_error_from_content(content: str) -> bool:
+    """True when the last checker-shaped JSON line is a tooling/infra failure, not tests."""
+    line = last_json_line_with_checker_status(content or "")
+    if not line:
+        return False
+    try:
+        parsed = json.loads(line)
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(parsed, dict)
+        and parsed.get("status") == "error"
+        and parsed.get("scope") == "checker"
+    )
+
+
 def pr_created_from_state(state: dict[str, Any] | None) -> bool:
     payload = (state or {}).get("pr_create_result")
     return isinstance(payload, dict) and bool(payload.get("ok"))

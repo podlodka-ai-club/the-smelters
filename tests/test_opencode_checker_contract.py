@@ -25,8 +25,9 @@ def test_opencode_checker_exit_zero_without_contract_json(monkeypatch, tmp_path:
     step = make_opencode_checker_step(str(root), model_id="test-model", timeout_secs=5.0)
     out = step(StepInput(), None)
     data = json.loads(out.content)
-    assert data["status"] == "failed"
-    assert "subprocess exit code 0" in (data.get("build_errors") or "")
+    assert data["status"] == "error"
+    assert data.get("scope") == "checker"
+    assert "subprocess exit code 0" in (data.get("detail") or "")
 
 
 def test_opencode_checker_exit_zero_with_contract_line(monkeypatch, tmp_path: Path) -> None:

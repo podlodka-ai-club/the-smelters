@@ -9,6 +9,8 @@ from agno.run.base import RunStatus
 from agno.run.workflow import LoopExecutionCompletedEvent, LoopIterationCompletedEvent
 from agno.workflow import Workflow
 
+from shared.checker_utils import last_json_line_with_checker_status
+
 
 @dataclass(frozen=True)
 class SmeltersPostRunSummary:
@@ -23,6 +25,17 @@ class SmeltersPostRunSummary:
     workflow_completed: bool
 
 
+def _checker_bearing_content_from_iteration_results(results: list[Any]) -> str | None:
+    """Prefer the last inner step whose text contains a Smelters checker JSON line."""
+    for step_out in reversed(results or []):
+        content = getattr(step_out, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            continue
+        if last_json_line_with_checker_status(content):
+            return content
+    return None
+
+
 def _last_checker_from_events(events: list[Any] | None) -> str | None:
     if not events:
         return None
@@ -30,12 +43,9 @@ def _last_checker_from_events(events: list[Any] | None) -> str | None:
     for ev in events:
         if isinstance(ev, LoopIterationCompletedEvent):
             results = ev.iteration_results or []
-            if not results:
-                continue
-            tail = results[-1]
-            content = getattr(tail, "content", None)
-            if isinstance(content, str) and content.strip():
-                last = content
+            picked = _checker_bearing_content_from_iteration_results(results)
+            if picked:
+                last = picked
     return last
 
 

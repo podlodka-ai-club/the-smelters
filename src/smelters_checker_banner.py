@@ -18,6 +18,7 @@ class CheckerGateFailureKind(str, Enum):
     NO_VALID_CONTRACT = "no_valid_contract"
     CONTRACT_FAILED = "contract_failed"
     PASSED_UNEXPECTED = "passed_unexpected"
+    CHECKER_INFRA = "checker_infra"
 
 
 def classify_last_checker_raw(raw: Optional[str]) -> CheckerGateFailureKind:
@@ -37,6 +38,8 @@ def classify_last_checker_raw(raw: Optional[str]) -> CheckerGateFailureKind:
         return CheckerGateFailureKind.CONTRACT_FAILED
     if status == "passed":
         return CheckerGateFailureKind.PASSED_UNEXPECTED
+    if status == "error" and parsed.get("scope") == "checker":
+        return CheckerGateFailureKind.CHECKER_INFRA
     return CheckerGateFailureKind.NO_VALID_CONTRACT
 
 

@@ -100,6 +100,13 @@ def print_smelters_flow_failed_banner(
                 f"({coder_loop_total_iterations} of {coder_loop_max_iterations} iterations) "
                 "without a parseable checker JSON line containing `\"status\": \"passed\"`."
             )
+        elif kind == CheckerGateFailureKind.CHECKER_INFRA:
+            reason_extra = (
+                f"\nThe coder/checker loop reached its configured maximum "
+                f"({coder_loop_total_iterations} of {coder_loop_max_iterations} iterations) "
+                "while the checker reported tooling or infrastructure errors "
+                '(JSON with `"status": "error"` and `"scope": "checker"`).'
+            )
         else:
             reason_extra = (
                 f"\nThe coder/checker loop reached its configured maximum "
@@ -134,6 +141,15 @@ def print_smelters_flow_failed_banner(
             "No checker step content was captured from the workflow event log, so the "
             "failure mode could not be classified. Check earlier stderr/stdout for step or "
             "workflow errors.\n"
+        )
+    elif kind == CheckerGateFailureKind.CHECKER_INFRA:
+        body = (
+            "\nThe Smelters orchestration did not complete successfully: the PR/reviewer "
+            "steps were not run because the checker gate never opened.\n"
+            "The checker reported a tooling or infrastructure problem "
+            '(final JSON line with `"status": "error"` and `"scope": "checker"`), '
+            "not a failing test suite. Fix the checker environment or model configuration; "
+            "the PR path opens only after a `\"status\": \"passed\"` line.\n"
         )
     else:
         body = (

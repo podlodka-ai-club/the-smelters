@@ -1,6 +1,7 @@
 """Smelters coder step via `opencode run` (separate model from reviewer in agent_config.yml)."""
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from agno.workflow.types import StepInput, StepOutput
 
 from agno_agents.android_coder import ANDROID_CODER_SYSTEM_PROMPT
 from agno_tools.claude_code_step import _build_user_prompt_for_coder
-from agno_tools.opencode_subprocess import run_opencode_command
+from agno_tools.opencode_subprocess import describe_opencode_cli_failure, run_opencode_command
 
 
 def make_opencode_coder_step(
@@ -65,6 +66,11 @@ def make_opencode_coder_step(
                     f'{{"ok": false, "error": "opencode exit {returncode}", '
                     f'"stderr_tail": {tail!r}}}'
                 )
+            )
+        cli_fail = describe_opencode_cli_failure(text_out)
+        if cli_fail:
+            return StepOutput(
+                content=json.dumps({"ok": False, "error": cli_fail}, ensure_ascii=False)
             )
         return StepOutput(content=text_out or "")
 

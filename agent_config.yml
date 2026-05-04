@@ -21,13 +21,13 @@ smelters_checker_backend: opencode
 smelters_reviewer_backend: opencode
 
 # Per-role opencode models (`opencode run --model <id>`) when backend is opencode.
+# Use IDs from `opencode models` — not every id exists in every install (e.g. ling may be absent).
 opencode_coder_model: opencode/minimax-m2.5-free
-opencode_checker_model: opencode/ling-2.6-flash-free
-opencode_reviewer_model: opencode/nemotron-3-super-free
+opencode_checker_model: opencode/minimax-m2.5-free
+opencode_reviewer_model: opencode/minimax-m2.5-free
 #
-# Other FREE models available in your current opencode setup:
+# Other FREE models often available (run `opencode models` to confirm):
 # - opencode/hy3-preview-free
-# - opencode/ling-2.6-flash-free
 # - opencode/minimax-m2.5-free
 # - opencode/nemotron-3-super-free
 # - google/gemma-3-4b-it

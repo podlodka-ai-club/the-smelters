@@ -31,6 +31,11 @@ def test_classify_passed_unexpected() -> None:
     assert classify_last_checker_raw(raw) == CheckerGateFailureKind.PASSED_UNEXPECTED
 
 
+def test_classify_checker_infra() -> None:
+    raw = '{"status": "error", "scope": "checker", "message": "timeout", "detail": ""}\n'
+    assert classify_last_checker_raw(raw) == CheckerGateFailureKind.CHECKER_INFRA
+
+
 def test_checker_failure_hint_prefers_failed_tests() -> None:
     raw = '{"status": "failed", "failed_tests": [{"name": "FooTest"}], "build_errors": ""}'
     hint = checker_failure_hint_one_line(raw)
@@ -77,3 +82,19 @@ def test_banner_no_contract_keeps_gate_wording() -> None:
     out = buf.getvalue()
     assert "did not contain an accepted JSON line" in out
     assert "subprocess exit code 0" in out
+
+
+def test_banner_checker_infra_wording() -> None:
+    buf = StringIO()
+    raw = '{"status": "error", "scope": "checker", "message": "CLI failed", "detail": ""}'
+    print_smelters_flow_failed_banner(
+        resume_file=Path("/tmp/r.json"),
+        suggested_command="uv run x",
+        coder_loop_total_iterations=1,
+        coder_loop_max_iterations=4,
+        last_checker_raw=raw,
+        file=buf,
+    )
+    out = buf.getvalue()
+    assert "tooling or infrastructure" in out
+    assert "scope" in out and "checker" in out

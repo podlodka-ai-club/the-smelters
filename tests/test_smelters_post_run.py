@@ -42,6 +42,26 @@ def test_summarize_detects_pr_create_in_session() -> None:
     assert s.pr_create_ok is True
 
 
+def test_summarize_finds_checker_when_last_step_content_empty() -> None:
+    wf = MagicMock()
+    wf.get_session_state.return_value = {}
+    passed = '{"status":"passed","failed_tests":[],"build_errors":"","timeout":false,"flaky":false}'
+    ev = LoopIterationCompletedEvent(
+        iteration_results=[
+            StepOutput(content="coder"),
+            StepOutput(content=passed),
+            StepOutput(content=""),
+        ],
+    )
+    run = MagicMock()
+    run.events = [ev]
+    run.status = RunStatus.completed
+    wf.get_last_run_output.return_value = run
+
+    s = summarize_smelters_post_run(wf, "sid")
+    assert s.last_checker_raw == passed
+
+
 def test_loop_stats_from_named_loop() -> None:
     wf = MagicMock()
     wf.get_session_state.return_value = {}
